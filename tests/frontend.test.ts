@@ -156,6 +156,13 @@ test("sidebar tab, calendar, curriculum editing and the kickoff interceptor work
   assert.match(detail.textContent!, /Ohm's law[\s\S]*Apply V=IR[\s\S]*Notes/);
   assert.match(detail.textContent!, /type “start t-2”/);
   assert.equal((detail.querySelector("a") as HTMLAnchorElement).rel, "noopener noreferrer");
+  assert.deepEqual([...detail.querySelectorAll("button")].map(node => node.textContent).slice(-2), ["Copy prompt", "Mark done"]);
+  let copied = "";
+  Object.defineProperty(window.navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { copied = text; } } });
+  clickButton(detail as HTMLElement, "Copy prompt");
+  await flush();
+  assert.match(copied, /^\[Learning plan\] Teach me "Ohm's law" \(module: .*; about 45 minutes\)\.\nObjectives:\n- Apply V=IR/);
+  assert.match(detail.textContent!, /Prompt copied\./);
   detail.remove();
 
   // Curriculum editing keeps focus while typing and saves.

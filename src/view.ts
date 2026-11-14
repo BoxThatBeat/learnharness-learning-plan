@@ -1,6 +1,6 @@
 import type { PluginFrontendContext, PluginWidgetHandle } from "learnharness-plugin-api";
 import { findTopic, type Plan } from "./plan-model.ts";
-import { addDays, type Slot } from "./schedule.ts";
+import { addDays, brief, type Slot } from "./schedule.ts";
 import { DraftPanel, el, howToStart, iconButton, message, subscribeState, type StateView } from "./ui-common.ts";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -203,7 +203,19 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
           }
           const actions = el(doc, "div", "lp-actions");
           const status = el(doc, "span", "lp-hint");
+          status.setAttribute("role", "status");
           box.append(actions);
+          local.push(ctx.ui.mountButton(actions, {
+            label: "Copy prompt", size: "sm", variant: "outline",
+            onClick: async () => {
+              try {
+                const clipboard = doc.defaultView?.navigator.clipboard;
+                if (!clipboard || !view) throw new Error("Copying isn't available here.");
+                await clipboard.writeText(brief(plan, slot, view.profile, "teaching"));
+                status.textContent = "Prompt copied.";
+              } catch (failure) { status.textContent = message(failure); }
+            },
+          }, { signal: dialogSignal }) as PluginWidgetHandle<unknown>);
           local.push(ctx.ui.mountButton(actions, {
             label: topic.status === "done" ? "Mark not done" : "Mark done", size: "sm", variant: topic.status === "done" ? "outline" : "default",
             onClick: async () => {
