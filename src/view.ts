@@ -243,7 +243,7 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
     edit ??= toEdit(plan);
     const reviseBox = el(doc, "section", "lp-section");
     reviseBox.append(el(doc, "h3", undefined, "Revise with AI"));
-    reviseBox.append(el(doc, "p", "lp-hint", "Describe the change, e.g. “more RF and antennas, less control theory, add a PCB design module”. Completed topics are kept. This makes one model request with your planning model."));
+    reviseBox.append(el(doc, "p", "lp-hint", "Describe the change, e.g. “more RF and antennas, less control theory, add a PCB design module”. Completed topics are kept."));
     const request = el(doc, "textarea", "lp-input lp-textarea");
     request.rows = 3;
     request.setAttribute("aria-label", "Revision request");

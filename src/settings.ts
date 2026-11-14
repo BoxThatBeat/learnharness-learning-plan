@@ -114,7 +114,7 @@ export function mountSettings(ctx: PluginFrontendContext, container: HTMLElement
   // ---- Planner ----
   const planner = el(doc, "section", "lp-section");
   planner.append(el(doc, "h3", undefined, "Goal and plan"));
-  planner.append(el(doc, "p", "lp-hint", "Describe your background and what you want to become. The planner draws on how good universities structure the field, may read public syllabus pages, and returns a curriculum for you to review. One run is a multi-step model task and may cost noticeably more than a chat turn."));
+  planner.append(el(doc, "p", "lp-hint", "Describe your background and what you want to become. The planner draws on how good universities structure the field, may read public syllabus pages, and returns a curriculum for you to review."));
   const modelRow = el(doc, "div", "lp-model");
   const pickerSlot = el(doc, "span");
   const modelHint = el(doc, "span", "lp-hint");
