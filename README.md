@@ -25,16 +25,25 @@ your study days, and start each day's topic from a teaching or practice session.
     each needs. **Revise with AI** rewrites only the unfinished part, for example
     "more RF, add a PCB design module". Completed topics and in-progress topics with
     unchanged titles keep their progress.
-- **"Today's topic" button** in teaching and practice session top bars. It offers
-  today's scheduled item, or the oldest overdue one, or any unfinished topic you
-  pick. **Attach** it, then send a message (even "go"). The plugin:
-  - puts a `[Learning plan]` brief (topic, objectives, session part, length) in front
-    of that message, and
-  - links the session to the topic, so the calendar can open it later.
+- **Starting a topic**
+  - **In a new session:** open a Teaching or Practice session and type
+    "start today's topic" as your first message, or "start t-12" for a specific
+    topic. The teacher also offers today's topic if you open with something like
+    "hi" or "go". Once you choose, it calls `learning_plan_start_topic`. That links
+    the session to the topic and gives the teacher the brief (topic, objectives,
+    session part, length).
+  - **In a session that's under way:** use the **Today's topic** button in the
+    session's top bar. It offers today's scheduled item, or the oldest overdue one,
+    or any unfinished topic you pick. **Attach** it, then send a message (even "go").
+    The `[Learning plan]` brief goes in front of that message and the session is
+    linked to the topic.
+  - The button isn't shown on the new-session screen: LearnHarness only creates a
+    session, and its top bar, when you send the first message.
+  - Linked sessions can be opened later from the topic in the calendar.
 - **Teacher integration**
   - Teacher and practice agents see the plan and the upcoming items.
   - They can call `learning_plan_complete_topic` once you've demonstrably met a
-    topic's objectives. In a kicked-off session the topic is inferred.
+    topic's objectives. In a session linked to a topic, the topic is inferred.
   - `learning_plan_overview` shows them the full curriculum.
 
 ## Scheduling
@@ -45,7 +54,7 @@ availability reschedules instantly, with no model call.
 - **Auto-shift:** finished topics stay on the day you completed them; everything
   unfinished flows onto your next study days.
 - **Keep dates:** the calendar counts from the start date and missed sessions show as
-  overdue. "Today's topic" offers the oldest overdue item first.
+  overdue. Starting today's topic picks up the oldest overdue item first.
 - **Multi-session topics** show `part/of`. Starting session *k* marks the earlier
   parts behind you, and the topic finishes when it is marked done.
 - **Review slots:** every *N*th slot is a review of recently scheduled topics (0

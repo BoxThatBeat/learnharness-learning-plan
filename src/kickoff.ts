@@ -109,6 +109,7 @@ export function setupKickoff(ctx: PluginFrontendContext, openPlan: () => void): 
           if (existing) button(actions, "Detach", "outline", () => { armed.delete(sessionId); ctx.refreshSubmissions(); close(); });
           button(actions, "Cancel", "ghost", close);
           body.append(el(doc, "p", "lp-hint", "Then send a message (even just “go”) to start. The session is linked to the topic in your calendar."));
+          body.append(el(doc, "p", "lp-hint", "Tip: in a brand-new session this button isn't shown yet. Type “start today's topic” as your first message instead."));
         }).catch(error => {
           if (signal.aborted) return;
           body.replaceChildren(el(doc, "p", "lp-error", message(error)));

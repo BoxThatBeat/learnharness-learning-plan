@@ -1,7 +1,7 @@
 import type { PluginFrontendContext, PluginWidgetHandle } from "learnharness-plugin-api";
 import { findTopic, type Plan } from "./plan-model.ts";
 import { addDays, type Slot } from "./schedule.ts";
-import { DraftPanel, el, iconButton, message, subscribeState, type StateView } from "./ui-common.ts";
+import { DraftPanel, el, howToStart, iconButton, message, subscribeState, type StateView } from "./ui-common.ts";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const STATE_LABEL: Record<Slot["state"], string> = { done: "Done", overdue: "Overdue", today: "Today", upcoming: "Upcoming", past: "Past review" };
@@ -89,7 +89,8 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
     bar.append(fill);
     header.append(bar);
     if (current.schedule.problem) header.append(el(doc, "p", "lp-error", current.schedule.problem));
-    if (overdue) header.append(el(doc, "p", "lp-warning", `You're ${overdue} session${overdue === 1 ? "" : "s"} behind. "Today's topic" in a session starts the oldest one.`));
+    if (overdue) header.append(el(doc, "p", "lp-warning", `You're ${overdue} session${overdue === 1 ? "" : "s"} behind. Starting today's topic picks up the oldest one.`));
+    header.append(howToStart(doc));
   }
 
   // ---- Calendar ----
@@ -159,7 +160,7 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
         const local: PluginWidgetHandle<unknown>[] = [];
         if (slot.kind === "review") {
           box.append(el(doc, "h2", undefined, `Review · ${slot.date}`));
-          box.append(el(doc, "p", undefined, "A review session consolidates these recent topics. Use “Today's topic” in a practice session to start it."));
+          box.append(el(doc, "p", undefined, "A review session consolidates these recent topics. On its day, open a new Practice session and type “start today's topic”."));
           const list = el(doc, "ul");
           for (const id of slot.topicIds) list.append(el(doc, "li", undefined, findTopic(plan, id)?.topic.title ?? id));
           box.append(list);
@@ -176,6 +177,7 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
             box.append(list);
           }
           if (topic.completionNote) box.append(el(doc, "p", "lp-note", `Completion note: ${topic.completionNote}`));
+          if (topic.status !== "done") box.append(el(doc, "p", "lp-hint", `To start it, open a new Teaching or Practice session and type “start ${topic.id}”.`));
           if (topic.resources.length) {
             box.append(el(doc, "h3", undefined, "Resources"));
             const list = el(doc, "ul");

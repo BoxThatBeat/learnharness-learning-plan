@@ -59,6 +59,7 @@
 .lp-tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--lp-border); }
 .lp-tab { padding: 0.4rem 0.75rem; border-bottom: 2px solid transparent; }
 .lp-tab[aria-selected="true"] { color: var(--lp-fg); border-bottom-color: var(--lp-fg); }
+.lp-howto { margin: 0.25rem 0 0; padding: 0.5rem 0.75rem; border-left: 3px solid var(--lp-today); border-radius: 0.25rem; background: color-mix(in oklab, var(--lp-today) 10%, transparent); font-size: 0.8rem; }
 .lp-progress { height: 0.35rem; margin-top: 0.4rem; border-radius: 999px; background: color-mix(in oklab, var(--lp-fg) 12%, transparent); overflow: hidden; }
 .lp-progress__fill { height: 100%; background: var(--lp-done); }
 
@@ -118,7 +119,10 @@
 .lp-draft__outline ul { margin: 0.1rem 0 0.35rem; padding-left: 1rem; color: var(--lp-muted); }
 
 /* Dialogs */
-.lp-kickoff, .lp-detail, .lp-confirm { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.25rem; min-width: min(32rem, 80vw); }
+/* Fill the host dialog, never exceed it: a fixed min-width overflowed narrower dialogs. */
+.lp-kickoff, .lp-detail, .lp-confirm { display: flex; flex-direction: column; gap: 0.35rem; box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; padding: 0.25rem; overflow-wrap: anywhere; }
+.lp-kickoff > *, .lp-detail > *, .lp-confirm > * { min-width: 0; max-width: 100%; }
+.lp-kickoff select.lp-input { text-overflow: ellipsis; }
 .lp-kickoff h2, .lp-detail h2, .lp-confirm h2 { margin: 0 0 0.25rem; font-size: 1rem; font-weight: 600; }
 .lp-detail h3 { margin: 0.5rem 0 0.15rem; font-size: 0.85rem; font-weight: 600; }
 .lp-detail ul { margin: 0; padding-left: 1.2rem; }

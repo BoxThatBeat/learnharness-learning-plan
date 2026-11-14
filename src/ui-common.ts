@@ -22,6 +22,17 @@ export function el<K extends keyof HTMLElementTagNameMap>(doc: Document, tag: K,
 export const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 /** Small native button for dense controls (move/delete); main actions use ctx.ui buttons. */
+/** How to start a planned topic. A brand-new session has no top bar (no session ID until the
+ * first message), so the "Today's topic" button only exists once a session is under way. */
+export function howToStart(doc: Document): HTMLElement {
+  const box = el(doc, "div", "lp-howto");
+  box.append(el(doc, "strong", undefined, "Starting a topic: "));
+  box.append(doc.createTextNode("open a new Teaching or Practice session and type “start today's topic” (or “start t-12” for a specific one). The teacher picks it up and links the session to your calendar. In a session that's already under way, use the "));
+  box.append(el(doc, "strong", undefined, "Today's topic"));
+  box.append(doc.createTextNode(" button in its top bar instead."));
+  return box;
+}
+
 export function iconButton(doc: Document, label: string, glyph: string, onClick: () => void): HTMLButtonElement {
   const button = el(doc, "button", "lp-icon-button", glyph);
   button.type = "button";

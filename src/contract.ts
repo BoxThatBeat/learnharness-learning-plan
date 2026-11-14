@@ -5,6 +5,7 @@ export const GENERATE_WORKER_ID = "plan-generate-v1";
 export const REVISE_WORKER_ID = "plan-revise-v1";
 export const COMPLETE_TOOL_NAME = "learning_plan_complete_topic";
 export const OVERVIEW_TOOL_NAME = "learning_plan_overview";
+export const START_TOOL_NAME = "learning_plan_start_topic";
 export const BRIEF_PREFIX = "[Learning plan]";
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -88,14 +89,23 @@ function describeSlot(plan: Plan, slot: Slot): string {
   return `${slot.date}: ${topic?.title ?? slot.topicId} [${slot.topicId}]${slot.of > 1 ? ` (session ${slot.part}/${slot.of})` : ""}${slot.state === "overdue" ? " — overdue" : ""}`;
 }
 
-/** System-prompt contribution for teacher/practice agents. */
+/** System-prompt contribution for teacher/practice agents. A new session has no ID until its
+ * first message, so the "Today's topic" button can't be used there; the agent offers the plan
+ * itself and links the session with the start tool. */
 export function buildInstructions(plan: Plan, profile: Profile, schedule: Schedule, today: string, agent: "teacher" | "practice"): string {
   const next = schedule.slots.filter(slot => slot.state !== "done" && slot.state !== "past").slice(0, 4).map(slot => describeSlot(plan, slot));
   const done = schedule.stats.topicsDone;
   const role = agent === "teacher"
     ? "teach that topic toward its objectives within the stated session length"
     : "pose practice on that topic (or, for a review, a mix of the listed topics)";
-  return `The learner follows a learning plan: "${plan.title}" (${done} of ${schedule.stats.topics} topics done; today is ${today}). Upcoming: ${next.join("; ") || "nothing scheduled"}. When a learner message starts with ${BRIEF_PREFIX}, they are kicking off that planned item: ${role}, connecting it to what they already covered. When the learner has demonstrably met a planned topic's objectives, call ${COMPLETE_TOOL_NAME} (topicId optional in a kicked-off session) with a one-line note; do not mark topics done just because they were discussed. Use ${OVERVIEW_TOOL_NAME} for the full curriculum. Otherwise, follow the learner's lead; the plan is guidance, not a constraint.`;
+  const current = schedule.current ? describeSlot(plan, schedule.current) : null;
+  const action = agent === "teacher" ? "teaching" : "posing practice";
+  return [
+    `The learner follows a learning plan: "${plan.title}" (${done} of ${schedule.stats.topics} topics done; today is ${today}). Upcoming: ${next.join("; ") || "nothing scheduled"}.`,
+    `When a learner message starts with ${BRIEF_PREFIX}, they are kicking off that planned item: ${role}, connecting it to what they already covered.`,
+    current ? `A session can also open without ${BRIEF_PREFIX}, e.g. with a greeting, "go", "start today's topic", "what's next?" or a plan topic's title or ID. Then, unless the message is about something specific outside the plan, your first reply offers today's planned item (${current}) and asks whether to start it or another topic; skip the question if they already asked for today's topic or named one. When they choose a planned item, call ${START_TOOL_NAME} (omit topicId for today's item) before ${action}: it links this session to the topic in their calendar and returns the brief to follow, as with a ${BRIEF_PREFIX} message.` : "",
+    `When the learner has demonstrably met a planned topic's objectives, call ${COMPLETE_TOOL_NAME} (topicId optional in a session linked to a topic) with a one-line note; do not mark topics done just because they were discussed. Use ${OVERVIEW_TOOL_NAME} for the full curriculum. Otherwise, follow the learner's lead; the plan is guidance, not a constraint.`,
+  ].filter(Boolean).join(" ");
 }
 
 export function overviewText(plan: Plan, schedule: Schedule): string {

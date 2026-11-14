@@ -4,14 +4,14 @@ import path from "node:path";
 import type { PluginBackendContext, PluginTaskSnapshot } from "learnharness-plugin-api";
 import {
   buildInstructions, COMPLETE_TOOL_NAME, curriculumSchema, GENERATE_WORKER_ID, generateInstructions, generatePrompt,
-  OVERVIEW_TOOL_NAME, overviewText, REVISE_WORKER_ID, reviseInstructions, revisePrompt,
+  OVERVIEW_TOOL_NAME, overviewText, REVISE_WORKER_ID, reviseInstructions, revisePrompt, START_TOOL_NAME,
 } from "./contract.ts";
 import { createFetchTool } from "./fetch-tool.ts";
 import {
   acceptGenerated, acceptRevision, applyManualEdit, emptyState, findTopic, LIMITS, linkSession, localDate, parseState,
   readCurriculum, readProfile, setTopicStatus, topicForSession, type DraftKind, type ModelChoice, type PlanState,
 } from "./plan-model.ts";
-import { buildSchedule } from "./schedule.ts";
+import { brief, buildSchedule, slotForTopic } from "./schedule.ts";
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 
@@ -117,6 +117,44 @@ export function activate(ctx: PluginBackendContext, options: BackendOptions = {}
           return {
             content: [{ type: "text" as const, text: `Marked "${topic.title}" done.${upcoming ? ` Next in the plan: ${upcoming} (${next!.date}).` : " The plan is complete."}` }],
             details: { topicId: topic.id, title: topic.title },
+          };
+        },
+      },
+      {
+        name: START_TOOL_NAME,
+        label: "Start plan topic",
+        description: "Start a learning-plan item in this session when the learner chooses one: links the session to the topic in their calendar and returns the brief (topic, objectives, session part, length) to follow. Omit topicId for today's scheduled item.",
+        parameters: {
+          type: "object",
+          properties: {
+            topicId: { type: "string", pattern: "^t-\\d+$", description: "Plan topic ID such as t-12; omit for today's scheduled item." },
+          },
+          additionalProperties: false,
+        },
+        execute: async (_toolCallId: string, params: unknown, signal?: AbortSignal) => {
+          if (signal?.aborted || ctx.signal.aborted) throw new Error("Cancelled.");
+          const plan = state.plan;
+          if (!plan) throw new Error("No learning plan exists.");
+          const sessionKind = context.agent === "practice" ? "practice" : "teaching";
+          const input = params as { topicId?: string };
+          const current = schedule().current;
+          const topicId = input.topicId ?? (current?.kind === "topic" ? current.topicId : null);
+          if (!topicId) {
+            if (!current) throw new Error("Nothing is scheduled; every topic is done. Pass a topicId to revisit one.");
+            // A review slot isn't one topic, so there is nothing to link.
+            return { content: [{ type: "text" as const, text: brief(plan, current, state.profile, sessionKind) }], details: { topicId: null } };
+          }
+          const found = findTopic(plan, topicId);
+          if (!found) throw new Error(`Unknown topic ${topicId}. Use ${OVERVIEW_TOOL_NAME} for topic IDs.`);
+          // Re-starting in an already linked session keeps its part number.
+          const linked = found.topic.sessionIds.indexOf(context.chatId);
+          const slot = slotForTopic(plan, topicId, today())!;
+          const part = linked >= 0 ? { ...slot, part: linked + 1 } : slot;
+          await change(current => linkSession(current, topicId, context.chatId));
+          const done = found.topic.status === "done" ? " (already marked done; this is a revisit)" : "";
+          return {
+            content: [{ type: "text" as const, text: `Linked this session to ${topicId}${done}.\n${brief(plan, part, state.profile, sessionKind)}` }],
+            details: { topicId, title: found.topic.title },
           };
         },
       },

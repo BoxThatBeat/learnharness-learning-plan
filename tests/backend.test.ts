@@ -112,6 +112,30 @@ test("complete-topic tool uses the session linked by kickoff and reports the nex
   assert.match((overview.content[0] as { text: string }).text, /\[t-2\] Ohm's law \(1 session, done 2026-11-02\)/);
 });
 
+test("start-topic tool links a session started without the button and returns the brief", async () => {
+  const host = fakeHost(temp());
+  activate(host.ctx, { now: clock("2026-11-02T12:00:00") });
+  await withPlan(host);
+  assert.match(host.instructions()[0]!.text, /offers today's planned item \(2026-11-02: Ohm's law \[t-2\]\)[\s\S]*call learning_plan_start_topic/);
+  const start = (chatId: string) => host.tools(chatId).find(tool => tool.name === "learning_plan_start_topic")!;
+
+  const today = await start("chat-new").execute("call", {});
+  assert.match((today.content[0] as { text: string }).text, /^Linked this session to t-2\.\n\[Learning plan\] Teach me "Ohm's law" \(module: Circuits; about 45 minutes\)\.\nObjectives:\n- V=IR$/);
+  let view = await host.call("get-state");
+  assert.deepEqual(view.plan.modules[0].topics[0].sessionIds, ["chat-new"]);
+
+  const second = await start("chat-rc").execute("call", { topicId: "t-3" });
+  assert.match((second.content[0] as { text: string }).text, /session 1 of 2/);
+  const again = await start("chat-rc").execute("call", { topicId: "t-3" });
+  assert.match((again.content[0] as { text: string }).text, /session 1 of 2/, "re-starting in the same session keeps its part");
+  view = await host.call("get-state");
+  assert.deepEqual(view.plan.modules[0].topics[1].sessionIds, ["chat-rc"]);
+
+  const complete = host.tools("chat-new").find(tool => tool.name === "learning_plan_complete_topic")!;
+  await complete.execute("call", { note: "ok" });
+  await assert.rejects(start("x").execute("call", { topicId: "t-99" }), /Unknown topic t-99/);
+});
+
 test("revise keeps completed topics; failed runs are reported; one run at a time", async () => {
   const host = fakeHost(temp());
   activate(host.ctx, { now: clock("2026-11-02T12:00:00") });

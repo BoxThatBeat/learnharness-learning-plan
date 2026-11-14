@@ -148,11 +148,13 @@ test("sidebar tab, calendar, curriculum editing and the kickoff interceptor work
   host.views.get("calendar")!.mount(viewRoot, new AbortController().signal);
   await flush();
   assert.match(viewRoot.querySelector(".lp-title")!.textContent!, /EE plan/);
+  assert.match(viewRoot.querySelector(".lp-howto")!.textContent!, /new Teaching or Practice session and type “start today's topic”/);
   const chips = [...viewRoot.querySelectorAll(".lp-grid .lp-chip")].map(node => `${node.textContent}|${node.className}`);
   assert.deepEqual(chips, ["Ohm's law|lp-chip lp-chip--today", "RC circuits (1/2)|lp-chip lp-chip--upcoming", "RC circuits (2/2)|lp-chip lp-chip--upcoming"]);
   (viewRoot.querySelector(".lp-chip--today") as HTMLButtonElement).click();
   const detail = doc.querySelector(".test-dialog")!;
   assert.match(detail.textContent!, /Ohm's law[\s\S]*Apply V=IR[\s\S]*Notes/);
+  assert.match(detail.textContent!, /type “start t-2”/);
   assert.equal((detail.querySelector("a") as HTMLAnchorElement).rel, "noopener noreferrer");
   detail.remove();
 
