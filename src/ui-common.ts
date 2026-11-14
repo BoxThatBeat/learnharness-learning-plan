@@ -1,0 +1,148 @@
+import type { PluginFrontendContext, PluginWidgetHandle } from "learnharness-plugin-api";
+import type { Draft, Plan, Profile } from "./plan-model.ts";
+import type { Schedule } from "./schedule.ts";
+
+export type StateView = {
+  loadError: string | null;
+  today: string;
+  profile: Profile;
+  plan: Plan | null;
+  draft: Draft | null;
+  progress?: { status: string; turns: number; activity?: string };
+  schedule: Schedule;
+};
+
+export function el<K extends keyof HTMLElementTagNameMap>(doc: Document, tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
+  const node = doc.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+export const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+/** Small native button for dense controls (move/delete); main actions use ctx.ui buttons. */
+export function iconButton(doc: Document, label: string, glyph: string, onClick: () => void): HTMLButtonElement {
+  const button = el(doc, "button", "lp-icon-button", glyph);
+  button.type = "button";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+/** Re-fetch plugin state on notifications/resync; latest request wins. */
+export function subscribeState(ctx: PluginFrontendContext, signal: AbortSignal, apply: (view: StateView) => void, onError: (error: unknown) => void): () => Promise<void> {
+  let generation = 0;
+  const refresh = async () => {
+    const mine = ++generation;
+    try {
+      const view = await ctx.call<StateView>("get-state");
+      if (mine === generation && !signal.aborted) apply(view);
+    } catch (error) { if (!signal.aborted) onError(error); }
+  };
+  const offNotification = ctx.onNotification(event => {
+    if (event.topic === "plan-changed" || event.topic === "draft-progress") void refresh();
+  });
+  const offResync = ctx.onResync(() => { void refresh(); });
+  signal.addEventListener("abort", () => { generation++; offNotification(); offResync(); }, { once: true });
+  void refresh();
+  return refresh;
+}
+
+/** Draft status/preview with Accept/Discard; shared by Settings and the plan view. */
+export class DraftPanel {
+  readonly root: HTMLElement;
+  private widgets: PluginWidgetHandle<unknown>[] = [];
+  private key = "";
+
+  constructor(private ctx: PluginFrontendContext, private signal: AbortSignal, private apply: (view: StateView) => void) {
+    this.root = el(document, "div", "lp-draft");
+    this.root.hidden = true;
+  }
+
+  private button(parent: HTMLElement, label: string, variant: "default" | "ghost" | "outline", onClick: () => Promise<void>) {
+    this.widgets.push(this.ctx.ui.mountButton(parent, { label, variant, size: "sm", onClick }, { signal: this.signal }) as PluginWidgetHandle<unknown>);
+  }
+
+  update(view: StateView) {
+    const draft = view.draft;
+    const key = draft ? `${draft.requestId}:${draft.status}:${draft.status === "running" ? JSON.stringify(view.progress ?? null) : ""}` : "";
+    if (key === this.key) return;
+    this.key = key;
+    for (const widget of this.widgets) widget.dispose();
+    this.widgets = [];
+    this.root.replaceChildren();
+    this.root.hidden = !draft;
+    if (!draft) return;
+    const doc = this.root.ownerDocument;
+    const status = el(doc, "div", "lp-draft__status");
+    status.setAttribute("role", "status");
+    this.root.append(status);
+    const actions = el(doc, "div", "lp-actions");
+    const error = el(doc, "span", "lp-hint");
+    const run = (operation: string) => async () => {
+      error.textContent = "";
+      try { this.apply(await this.ctx.call<StateView>(operation)); } catch (failure) { error.textContent = message(failure); }
+    };
+    const verb = draft.kind === "generate" ? "Generating your plan" : "Revising your plan";
+    if (draft.status === "running") {
+      const progress = view.progress;
+      status.textContent = `${verb}… ${progress ? `(${progress.status}, step ${progress.turns}${progress.activity ? `: ${progress.activity}` : ""})` : ""} This can take a few minutes.`;
+      this.root.append(actions);
+      this.button(actions, "Cancel", "ghost", run("draft-discard"));
+      actions.append(error);
+      return;
+    }
+    if (draft.status === "failed") {
+      status.textContent = `${verb} failed: ${draft.error}`;
+      this.root.append(actions);
+      this.button(actions, "Dismiss", "ghost", run("draft-discard"));
+      actions.append(error);
+      return;
+    }
+    const curriculum = draft.curriculum;
+    const topics = curriculum.modules.flatMap(module => module.topics);
+    const sessions = topics.reduce((sum, topic) => sum + topic.sessions, 0);
+    const perWeek = Math.max(1, view.profile.weekdays.length);
+    status.textContent = `Draft ready: "${curriculum.title}" — ${curriculum.modules.length} modules, ${topics.length} topics, ${sessions} sessions (≈ ${Math.ceil(sessions / perWeek)} weeks at ${perWeek}/week, before reviews).`;
+    if (curriculum.summary) this.root.append(el(doc, "p", "lp-draft__summary", curriculum.summary));
+    if (draft.kind === "revise") this.root.append(el(doc, "p", "lp-hint", "Completed topics stay as they are; this replaces the unfinished part."));
+    const outline = el(doc, "ol", "lp-draft__outline");
+    for (const module of curriculum.modules) {
+      const item = el(doc, "li");
+      item.append(el(doc, "strong", undefined, module.title));
+      const list = el(doc, "ul");
+      for (const topic of module.topics) list.append(el(doc, "li", undefined, `${topic.title} · ${topic.sessions} session${topic.sessions === 1 ? "" : "s"}`));
+      item.append(list);
+      outline.append(item);
+    }
+    this.root.append(outline);
+    if (curriculum.sources.length) {
+      const sources = el(doc, "details", "lp-draft__sources");
+      sources.append(el(doc, "summary", undefined, `Sources (${curriculum.sources.length})`));
+      const list = el(doc, "ul");
+      for (const source of curriculum.sources) {
+        const link = el(doc, "a", undefined, source.title);
+        link.href = source.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        const item = el(doc, "li");
+        item.append(link);
+        list.append(item);
+      }
+      sources.append(list);
+      this.root.append(sources);
+    }
+    this.root.append(actions);
+    this.button(actions, draft.kind === "generate" ? "Accept plan" : "Accept revision", "default", run("draft-accept"));
+    this.button(actions, "Discard", "ghost", run("draft-discard"));
+    actions.append(error);
+  }
+
+  dispose() {
+    for (const widget of this.widgets) widget.dispose();
+    this.widgets = [];
+    this.root.remove();
+  }
+}
