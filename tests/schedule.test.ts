@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { acceptGenerated, defaultProfile, emptyState, linkSession, setTopicStatus, type Curriculum, type PlanState, type Profile } from "../src/plan-model.ts";
-import { addDays, brief, buildSchedule, slotForTopic, weekday } from "../src/schedule.ts";
+import { addDays, brief, buildSchedule, layoutWeek, slotForTopic, weekday } from "../src/schedule.ts";
 
 const curriculum: Curriculum = {
   title: "EE for CS grads",
@@ -40,8 +40,40 @@ test("fixed mode places units on study days from the start date and flags overdu
   assert.equal(schedule.stats.endDate, "2026-11-09");
 
   const later = buildSchedule(state.plan, profile(), "2026-11-05");
-  assert.deepEqual(later.slots.map(slot => slot.state), ["overdue", "overdue", "upcoming", "upcoming"]);
+  // t-3 (11-04 and 11-06) is due at the end of 11-06, so its first session passing is not overdue.
+  assert.deepEqual(later.slots.map(slot => slot.state), ["overdue", "today", "today", "upcoming"]);
   assert.equal(later.current?.date, "2026-11-02", "oldest overdue first");
+
+  const last = buildSchedule(state.plan, profile(), "2026-11-06");
+  assert.deepEqual(last.slots.map(slot => slot.state), ["overdue", "today", "today", "upcoming"], "still due on its last day");
+  const after = buildSchedule(state.plan, profile(), "2026-11-07");
+  assert.deepEqual(after.slots.map(slot => slot.state), ["overdue", "overdue", "overdue", "upcoming"], "overdue once the last day has passed");
+});
+
+test("a multi-session topic is one block spanning its first to last session, due on the last day", () => {
+  const state = planned();
+  const schedule = buildSchedule(state.plan, profile(), "2026-11-05");
+  assert.deepEqual(schedule.blocks.map(block => [block.topicId, block.start, block.end, block.firstPart, block.lastPart, block.state]), [
+    ["t-2", "2026-11-02", "2026-11-02", 1, 1, "overdue"],
+    ["t-3", "2026-11-04", "2026-11-06", 1, 2, "today"],
+    ["t-5", "2026-11-09", "2026-11-09", 1, 1, "upcoming"],
+  ]);
+  assert.equal(schedule.current?.date, "2026-11-02");
+  const onlyRc = buildSchedule(setTopicStatus(state, "t-2", true, "2026-11-02").plan, profile(), "2026-11-05");
+  assert.equal(onlyRc.current?.kind === "topic" ? `${onlyRc.current.topicId}:${onlyRc.current.part}` : null, "t-3:1", "an in-progress topic's next session is current");
+});
+
+test("weeks lay blocks out in lanes, clipped at the week edges", () => {
+  const state = planned();
+  const { blocks } = buildSchedule(state.plan, profile({ weekdays: [1, 2, 3, 4, 5, 6, 0] }), "2026-11-02");
+  // Daily study: Ohm 11-02, RC 11-03..11-04, Antennas 11-05.
+  const week = layoutWeek(blocks, "2026-11-02");
+  assert.deepEqual(week.bars.map(bar => [bar.block.topicId, bar.col, bar.span, bar.lane]), [["t-2", 0, 1, 0], ["t-3", 1, 2, 0], ["t-5", 3, 1, 0]]);
+  assert.equal(week.lanes, 1);
+  const spanning = { ...blocks[1]!, start: "2026-10-30", end: "2026-11-03" };
+  const clipped = layoutWeek([spanning, blocks[0]!], "2026-11-02");
+  assert.deepEqual(clipped.bars.map(bar => [bar.col, bar.span, bar.lane, bar.fromPrev, bar.toNext]), [[0, 2, 0, true, false], [0, 1, 1, false, false]]);
+  assert.deepEqual(layoutWeek(blocks, "2026-11-09").bars, []);
 });
 
 test("shift mode moves unfinished work to the next study days and keeps history on completion dates", () => {

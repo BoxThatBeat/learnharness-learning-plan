@@ -150,7 +150,7 @@ test("sidebar tab, calendar, curriculum editing and the kickoff interceptor work
   assert.match(viewRoot.querySelector(".lp-title")!.textContent!, /EE plan/);
   assert.match(viewRoot.querySelector(".lp-howto")!.textContent!, /new Teaching or Practice session and type “start today's topic”/);
   const chips = [...viewRoot.querySelectorAll(".lp-grid .lp-chip")].map(node => `${node.textContent}|${node.className}`);
-  assert.deepEqual(chips, ["Ohm's law|lp-chip lp-chip--today", "RC circuits (1/2)|lp-chip lp-chip--upcoming", "RC circuits (2/2)|lp-chip lp-chip--upcoming"]);
+  assert.deepEqual(chips, ["Ohm's law|lp-chip lp-chip--today lp-bar", "RC circuits (1–2/2)|lp-chip lp-chip--upcoming lp-bar"]);
   (viewRoot.querySelector(".lp-chip--today") as HTMLButtonElement).click();
   const detail = doc.querySelector(".test-dialog")!;
   assert.match(detail.textContent!, /Ohm's law[\s\S]*Apply V=IR[\s\S]*Notes/);

@@ -8,8 +8,19 @@ export type Slot =
   | { key: string; date: string; kind: "topic"; topicId: string; part: number; of: number; state: SlotState }
   | { key: string; date: string; kind: "review"; topicIds: string[]; state: SlotState };
 
+/** A topic's sessions drawn as one calendar block from its first to its last session day.
+ * `end` is the topic's due date: it is overdue only once that whole day has passed. */
+export type Block = {
+  key: string; topicId: string; start: string; end: string;
+  firstPart: number; lastPart: number; of: number;
+  /** The session to work on next (the last one when everything is done). */
+  part: number;
+  state: SlotState;
+};
+
 export type Schedule = {
   slots: Slot[];
+  blocks: Block[];
   /** The item the kickoff button offers: oldest overdue, else today's, else the next one. */
   current: Slot | null;
   stats: { topicsDone: number; topics: number; sessionsLeft: number; endDate: string | null };
@@ -53,10 +64,80 @@ function units(topics: readonly Topic[], skipProgress: boolean): Unit[] {
   });
 }
 
-function dateState(date: string, today: string, done: boolean, review: boolean): SlotState {
-  if (done) return "done";
-  if (date < today) return review ? "past" : "overdue";
+function dateState(date: string, today: string): SlotState {
+  if (date < today) return "past";
   return date === today ? "today" : "upcoming";
+}
+
+/** A topic is overdue only after the last day of its span; while today falls inside the
+ * span it is in progress ("today"), even if its first session's day has passed. */
+function topicState(first: string, last: string, today: string): SlotState {
+  if (last < today) return "overdue";
+  return first <= today ? "today" : "upcoming";
+}
+
+function settle(slots: Slot[], today: string): Slot[] {
+  const span = new Map<string, { first: string; last: string }>();
+  for (const slot of slots) {
+    if (slot.kind !== "topic") continue;
+    const seen = span.get(slot.topicId);
+    span.set(slot.topicId, { first: seen && seen.first < slot.date ? seen.first : slot.date, last: seen && seen.last > slot.date ? seen.last : slot.date });
+  }
+  return slots.map(slot => {
+    if (slot.kind !== "topic" || slot.state === "done") return slot;
+    const { first, last } = span.get(slot.topicId)!;
+    return { ...slot, state: topicState(first, last, today) };
+  });
+}
+
+export function buildBlocks(slots: readonly Slot[]): Block[] {
+  const blocks = new Map<string, Block & { next: number | null }>();
+  for (const slot of slots) {
+    if (slot.kind !== "topic") continue;
+    const block = blocks.get(slot.topicId);
+    if (!block) {
+      blocks.set(slot.topicId, {
+        key: slot.topicId, topicId: slot.topicId, start: slot.date, end: slot.date,
+        firstPart: slot.part, lastPart: slot.part, of: slot.of, part: slot.part,
+        state: slot.state, next: slot.state === "done" ? null : slot.part,
+      });
+      continue;
+    }
+    block.start = slot.date < block.start ? slot.date : block.start;
+    block.end = slot.date > block.end ? slot.date : block.end;
+    block.firstPart = Math.min(block.firstPart, slot.part);
+    block.lastPart = Math.max(block.lastPart, slot.part);
+    if (slot.state !== "done") {
+      block.state = slot.state;
+      block.next ??= slot.part;
+    }
+  }
+  return [...blocks.values()].map(({ next, ...block }) => ({ ...block, part: next ?? block.lastPart }));
+}
+
+/** The session a block's "start" actions refer to. */
+export function blockSlot(block: Block): Slot {
+  return { key: `${block.topicId}:${block.part}`, date: block.start, kind: "topic", topicId: block.topicId, part: block.part, of: block.of, state: block.state };
+}
+
+export type WeekBar = { block: Block; col: number; span: number; lane: number; fromPrev: boolean; toNext: boolean };
+
+/** Lay a week's blocks (Monday first) onto stacked lanes, clipped to the week. */
+export function layoutWeek(blocks: readonly Block[], weekStart: string): { bars: WeekBar[]; lanes: number } {
+  const dayIndex = (date: string) => Math.round((toUtc(date) - toUtc(weekStart)) / 86_400_000);
+  const inWeek = blocks
+    .filter(block => dayIndex(block.end) >= 0 && dayIndex(block.start) <= 6)
+    .sort((a, b) => a.start.localeCompare(b.start) || b.end.localeCompare(a.end));
+  const laneEnds: number[] = [];
+  const bars = inWeek.map((block): WeekBar => {
+    const col = Math.max(0, dayIndex(block.start));
+    const last = Math.min(6, dayIndex(block.end));
+    let lane = laneEnds.findIndex(end => end < col);
+    if (lane < 0) lane = laneEnds.length;
+    laneEnds[lane] = last;
+    return { block, col, span: last - col + 1, lane, fromPrev: dayIndex(block.start) < 0, toNext: dayIndex(block.end) > 6 };
+  });
+  return { bars, lanes: laneEnds.length };
 }
 
 /** Interleave review slots into a unit stream. `offset` continues the count across history. */
@@ -71,13 +152,14 @@ function place(
     if (pending >= queue.length || slots.length >= MAX_SLOTS) break;
     index++;
     if (profile.reviewEvery > 0 && index % profile.reviewEvery === 0 && recent.length) {
-      slots.push({ key: `review:${date}`, date, kind: "review", topicIds: [...new Set(recent)].slice(-4), state: dateState(date, today, false, true) });
+      slots.push({ key: `review:${date}`, date, kind: "review", topicIds: [...new Set(recent)].slice(-4), state: dateState(date, today) });
       continue;
     }
     const unit = queue[pending++]!;
     if (!recent.includes(unit.topicId)) recent.push(unit.topicId);
     if (recent.length > profile.reviewEvery * 2 + 2) recent.shift();
-    slots.push({ key: `${unit.topicId}:${unit.part}`, date, kind: "topic", ...unit, state: dateState(date, today, isDone(unit), false) });
+    // Topic states depend on the whole topic's span, so `settle` fills them in afterwards.
+    slots.push({ key: `${unit.topicId}:${unit.part}`, date, kind: "topic", ...unit, state: isDone(unit) ? "done" : "upcoming" });
   }
   return slots;
 }
@@ -85,7 +167,7 @@ function place(
 export function buildSchedule(plan: Plan | null, profile: Profile, today: string): Schedule {
   const topics = allTopics(plan);
   const topicsDone = topics.filter(topic => topic.status === "done").length;
-  const empty = (problem: string | null): Schedule => ({ slots: [], current: null, stats: { topicsDone, topics: topics.length, sessionsLeft: 0, endDate: null }, problem });
+  const empty = (problem: string | null): Schedule => ({ slots: [], blocks: [], current: null, stats: { topicsDone, topics: topics.length, sessionsLeft: 0, endDate: null }, problem });
   if (!plan) return empty(null);
   if (!profile.weekdays.length) return empty("Choose at least one study day in Settings.");
 
@@ -96,7 +178,7 @@ export function buildSchedule(plan: Plan | null, profile: Profile, today: string
   };
   let slots: Slot[];
   if (profile.behindMode === "fixed") {
-    slots = place(units(topics, false), studyDays(profile.startDate, profile.weekdays), profile, today, 0, [], unitDone);
+    slots = settle(place(units(topics, false), studyDays(profile.startDate, profile.weekdays), profile, today, 0, [], unitDone), today);
   } else {
     // History: finished topics on their completion dates; then the rest from today on.
     const history: Slot[] = topics
@@ -107,15 +189,15 @@ export function buildSchedule(plan: Plan | null, profile: Profile, today: string
     const recent = history.map(slot => (slot as { topicId: string }).topicId).slice(-4);
     const from = profile.startDate > today ? profile.startDate : today;
     const ahead = place(units(topics.filter(topic => topic.status !== "done"), true), studyDays(from, profile.weekdays), profile, today, behind, recent, () => false);
-    slots = [...history, ...ahead];
+    slots = [...history, ...settle(ahead, today)];
   }
   const open = slots.filter(slot => slot.state === "overdue" || slot.state === "today" || slot.state === "upcoming");
-  const current = open.find(slot => slot.state === "overdue")
-    ?? open.find(slot => slot.date >= today)
-    ?? null;
+  // Past-dated sessions of a topic still in progress are "today", so the first open slot is next.
+  const current = open.find(slot => slot.state === "overdue") ?? open[0] ?? null;
   const remaining = slots.filter(slot => slot.kind === "topic" && slot.state !== "done");
   return {
     slots,
+    blocks: buildBlocks(slots),
     current,
     stats: { topicsDone, topics: topics.length, sessionsLeft: remaining.length, endDate: remaining.at(-1)?.date ?? null },
     problem: null,

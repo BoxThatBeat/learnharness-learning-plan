@@ -19,7 +19,8 @@ your study days, and start each day's topic from a teaching or practice session.
   - The result arrives as a **draft** you review before accepting.
 - **Sidebar tab "Learning plan"**
   - **Calendar:** a month view with topics colour-coded as today, upcoming, overdue,
-    done or review. Click a topic for its objectives, resources and linked sessions,
+    done or review. A multi-session topic is one bar stretching across the days of
+    its sessions, like an event in Google Calendar. Click a topic for its objectives, resources and linked sessions,
     and to mark it done or not done.
   - **Curriculum:** rename, reorder, add or remove topics and set how many sessions
     each needs. **Revise with AI** rewrites only the unfinished part, for example
@@ -56,7 +57,9 @@ availability reschedules instantly, with no model call.
 - **Keep dates:** the calendar counts from the start date and missed sessions show as
   overdue. Starting today's topic picks up the oldest overdue item first.
 - **Multi-session topics** show `part/of`. Starting session *k* marks the earlier
-  parts behind you, and the topic finishes when it is marked done.
+  parts behind you, and the topic finishes when it is marked done. A topic is due at
+  the end of its last session's day: it only turns overdue after that day passes, not
+  when its first session's day does.
 - **Review slots:** every *N*th slot is a review of recently scheduled topics (0
   turns them off).
 

@@ -1,6 +1,6 @@
 import type { PluginFrontendContext, PluginWidgetHandle } from "learnharness-plugin-api";
 import { findTopic, type Plan } from "./plan-model.ts";
-import { addDays, brief, type Slot } from "./schedule.ts";
+import { addDays, blockSlot, brief, layoutWeek, type Block, type Slot } from "./schedule.ts";
 import { DraftPanel, el, howToStart, iconButton, message, subscribeState, type StateView } from "./ui-common.ts";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -95,8 +95,8 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
 
   // ---- Calendar ----
   function renderCalendar(plan: Plan, current: StateView) {
-    const byDate = new Map<string, Slot[]>();
-    for (const slot of current.schedule.slots) byDate.set(slot.date, [...(byDate.get(slot.date) ?? []), slot]);
+    const reviews = new Map<string, Slot>();
+    for (const slot of current.schedule.slots) if (slot.kind === "review") reviews.set(slot.date, slot);
     month ||= monthOf(current.schedule.current?.date ?? current.today);
     const nav = el(doc, "div", "lp-month-nav");
     nav.append(
@@ -110,19 +110,15 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
     nav.append(todayButton);
     const grid = el(doc, "div", "lp-grid");
     grid.setAttribute("role", "grid");
-    for (const name of WEEKDAYS) grid.append(el(doc, "div", "lp-grid__weekday", name));
+    const names = el(doc, "div", "lp-grid__weekdays");
+    for (const name of WEEKDAYS) names.append(el(doc, "div", "lp-grid__weekday", name));
+    grid.append(names);
     const first = `${month}-01`;
     const offset = (new Date(`${first}T00:00:00Z`).getUTCDay() + 6) % 7;
-    let date = addDays(first, -offset);
-    for (let cell = 0; cell < 42; cell++, date = addDays(date, 1)) {
-      if (cell === 35 && monthOf(date) !== month) break;
-      const day = el(doc, "div", "lp-day");
-      if (monthOf(date) !== month) day.classList.add("is-outside");
-      if (date === current.today) day.classList.add("is-today");
-      if (current.profile.weekdays.includes(new Date(`${date}T00:00:00Z`).getUTCDay())) day.classList.add("is-study");
-      day.append(el(doc, "div", "lp-day__number", String(Number(date.slice(8)))));
-      for (const slot of byDate.get(date) ?? []) day.append(chip(plan, slot));
-      grid.append(day);
+    let weekStart = addDays(first, -offset);
+    for (let w = 0; w < 6; w++, weekStart = addDays(weekStart, 7)) {
+      if (w === 5 && monthOf(weekStart) !== month) break;
+      grid.append(renderWeek(plan, current, weekStart, reviews));
     }
     const legend = el(doc, "div", "lp-legend");
     for (const state of ["today", "upcoming", "overdue", "done"] as const) {
@@ -133,24 +129,76 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
     body.append(nav, grid, legend);
   }
 
-  function chip(plan: Plan, slot: Slot): HTMLElement {
-    const button = el(doc, "button", `lp-chip lp-chip--${slot.state}${slot.kind === "review" ? " lp-chip--review" : ""}`);
-    button.type = "button";
-    if (slot.kind === "review") {
-      button.textContent = "Review";
-      button.setAttribute("aria-label", `${STATE_LABEL[slot.state]}: review session`);
-    } else {
-      const topic = findTopic(plan, slot.topicId)?.topic;
-      const title = topic?.title ?? slot.topicId;
-      button.textContent = slot.of > 1 ? `${title} (${slot.part}/${slot.of})` : title;
-      button.title = button.textContent;
-      button.setAttribute("aria-label", `${STATE_LABEL[slot.state]}: ${button.textContent}`);
+  /** One calendar week: day cells behind, multi-day topic bars stacked in lanes above, reviews below. */
+  function renderWeek(plan: Plan, current: StateView, weekStart: string, reviews: Map<string, Slot>): HTMLElement {
+    const week = el(doc, "div", "lp-week");
+    const { bars, lanes } = layoutWeek(current.schedule.blocks, weekStart);
+    week.style.gridTemplateRows = `auto${" auto".repeat(lanes)} 1fr`;
+    for (let i = 0; i < 7; i++) {
+      const date = addDays(weekStart, i);
+      const column = String(i + 1);
+      const outside = monthOf(date) !== month;
+      const cell = el(doc, "div", "lp-day");
+      cell.style.gridColumn = column;
+      cell.style.gridRow = `1 / ${lanes + 3}`;
+      if (outside) cell.classList.add("is-outside");
+      if (date === current.today) cell.classList.add("is-today");
+      if (current.profile.weekdays.includes(new Date(`${date}T00:00:00Z`).getUTCDay())) cell.classList.add("is-study");
+      const number = el(doc, "div", "lp-day__number", String(Number(date.slice(8))));
+      number.style.gridColumn = column;
+      number.style.gridRow = "1";
+      if (outside) number.classList.add("is-outside");
+      if (date === current.today) number.classList.add("is-today");
+      week.append(cell, number);
+      const review = reviews.get(date);
+      if (review) {
+        const reviewChip = chip(plan, review);
+        reviewChip.style.gridColumn = column;
+        reviewChip.style.gridRow = String(lanes + 2);
+        reviewChip.classList.add("lp-chip--cell");
+        week.append(reviewChip);
+      }
     }
+    for (const bar of bars) {
+      const node = blockChip(plan, bar.block);
+      node.classList.add("lp-bar");
+      if (bar.fromPrev) node.classList.add("lp-bar--from-prev");
+      if (bar.toNext) node.classList.add("lp-bar--to-next");
+      node.style.gridColumn = `${bar.col + 1} / span ${bar.span}`;
+      node.style.gridRow = String(bar.lane + 2);
+      week.append(node);
+    }
+    return week;
+  }
+
+  function partsLabel(block: Block): string {
+    if (block.of <= 1) return "";
+    return block.firstPart === block.lastPart ? `${block.firstPart}/${block.of}` : `${block.firstPart}–${block.lastPart}/${block.of}`;
+  }
+
+  function blockChip(plan: Plan, block: Block): HTMLElement {
+    const button = el(doc, "button", `lp-chip lp-chip--${block.state}`);
+    button.type = "button";
+    const title = findTopic(plan, block.topicId)?.topic.title ?? block.topicId;
+    const parts = partsLabel(block);
+    button.textContent = parts ? `${title} (${parts})` : title;
+    const range = block.start === block.end ? block.start : `${block.start} to ${block.end}`;
+    button.title = `${button.textContent} · ${range}`;
+    button.setAttribute("aria-label", `${STATE_LABEL[block.state]}: ${button.textContent}, ${range}`);
+    button.addEventListener("click", () => openDetail(plan, blockSlot(block), block));
+    return button;
+  }
+
+  function chip(plan: Plan, slot: Slot): HTMLElement {
+    const button = el(doc, "button", `lp-chip lp-chip--${slot.state} lp-chip--review`);
+    button.type = "button";
+    button.textContent = "Review";
+    button.setAttribute("aria-label", `${STATE_LABEL[slot.state]}: review session`);
     button.addEventListener("click", () => openDetail(plan, slot));
     return button;
   }
 
-  function openDetail(plan: Plan, slot: Slot) {
+  function openDetail(plan: Plan, slot: Slot, block?: Block) {
     let dialog: PluginWidgetHandle<unknown> | undefined;
     dialog = ctx.ui.openDialog({
       title: slot.kind === "review" ? "Review session" : "Topic",
@@ -168,8 +216,11 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
           const found = findTopic(plan, slot.topicId);
           if (!found) { box.append(el(doc, "p", undefined, "This topic is no longer in the plan.")); return () => box.remove(); }
           const { module, topic } = found;
+          const when = block && block.start !== block.end
+            ? `${block.start} to ${block.end}${topic.status === "done" ? "" : ` (due ${block.end})`}`
+            : slot.date;
           box.append(el(doc, "h2", undefined, topic.title));
-          box.append(el(doc, "p", "lp-hint", `${module.title} · ${topic.id} · ${topic.sessions} session${topic.sessions === 1 ? "" : "s"} · ${slot.date}${slot.of > 1 ? ` (session ${slot.part}/${slot.of})` : ""} · ${topic.status === "done" ? `done ${topic.completedAt ?? ""}` : STATE_LABEL[slot.state]}`));
+          box.append(el(doc, "p", "lp-hint", `${module.title} · ${topic.id} · ${topic.sessions} session${topic.sessions === 1 ? "" : "s"} · ${when}${topic.status === "done" ? ` · done ${topic.completedAt ?? ""}` : ` · ${STATE_LABEL[slot.state]}`}`));
           if (topic.objectives.length) {
             box.append(el(doc, "h3", undefined, "Objectives"));
             const list = el(doc, "ul");
