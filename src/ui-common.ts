@@ -1,16 +1,32 @@
 import type { PluginFrontendContext, PluginWidgetHandle } from "learnharness-plugin-api";
-import type { Draft, Plan, Profile } from "./plan-model.ts";
+import { entryName, type Draft, type Plan, type PlanEntry, type Profile } from "./plan-model.ts";
 import type { Schedule } from "./schedule.ts";
 
-export type StateView = {
-  loadError: string | null;
-  today: string;
+/** One course as the frontend sees it. */
+export type PlanView = {
+  id: string;
+  name: string;
+  hue: number;
+  archived: boolean;
   profile: Profile;
   plan: Plan | null;
   draft: Draft | null;
   progress?: { status: string; turns: number; activity?: string };
   schedule: Schedule;
 };
+
+export type StateView = {
+  loadError: string | null;
+  today: string;
+  plans: PlanView[];
+  /** Set by `add-plan`: the ID of the course just created. */
+  created?: string;
+};
+
+export const planLabel = (entry: Pick<PlanEntry, "name" | "plan">): string => entryName(entry);
+export const planActive = (view: StateView): PlanView[] => view.plans.filter(entry => !entry.archived);
+/** The course colour. Saturation/lightness are fixed so every hue reads on light and dark themes. */
+export const planColor = (hue: number): string => `hsl(${hue} 65% 52%)`;
 
 export function el<K extends keyof HTMLElementTagNameMap>(doc: Document, tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
   const node = doc.createElement(tag);
@@ -21,7 +37,6 @@ export function el<K extends keyof HTMLElementTagNameMap>(doc: Document, tag: K,
 
 export const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-/** Small native button for dense controls (move/delete); main actions use ctx.ui buttons. */
 /** How to start a planned topic. A brand-new session has no top bar (no session ID until the
  * first message), so the "Today's topic" button only exists once a session is under way. */
 export function howToStart(doc: Document): HTMLElement {
@@ -33,6 +48,7 @@ export function howToStart(doc: Document): HTMLElement {
   return box;
 }
 
+/** Small native button for dense controls (move/delete); main actions use ctx.ui buttons. */
 export function iconButton(doc: Document, label: string, glyph: string, onClick: () => void): HTMLButtonElement {
   const button = el(doc, "button", "lp-icon-button", glyph);
   button.type = "button";
@@ -76,16 +92,17 @@ export class DraftPanel {
     this.widgets.push(this.ctx.ui.mountButton(parent, { label, variant, size: "sm", onClick }, { signal: this.signal }) as PluginWidgetHandle<unknown>);
   }
 
-  update(view: StateView) {
-    const draft = view.draft;
-    const key = draft ? `${draft.requestId}:${draft.status}:${draft.status === "running" ? JSON.stringify(view.progress ?? null) : ""}` : "";
+  /** `heading` names the course when several exist; `plan` is the course the draft belongs to. */
+  update(plan: PlanView | undefined, heading = "") {
+    const draft = plan?.draft;
+    const key = plan && draft ? `${plan.id}:${heading}:${draft.requestId}:${draft.status}:${draft.status === "running" ? JSON.stringify(plan.progress ?? null) : ""}` : "";
     if (key === this.key) return;
     this.key = key;
     for (const widget of this.widgets) widget.dispose();
     this.widgets = [];
     this.root.replaceChildren();
     this.root.hidden = !draft;
-    if (!draft) return;
+    if (!plan || !draft) return;
     const doc = this.root.ownerDocument;
     const status = el(doc, "div", "lp-draft__status");
     status.setAttribute("role", "status");
@@ -94,11 +111,12 @@ export class DraftPanel {
     const error = el(doc, "span", "lp-hint");
     const run = (operation: string) => async () => {
       error.textContent = "";
-      try { this.apply(await this.ctx.call<StateView>(operation)); } catch (failure) { error.textContent = message(failure); }
+      try { this.apply(await this.ctx.call<StateView>(operation, { planId: plan.id })); } catch (failure) { error.textContent = message(failure); }
     };
-    const verb = draft.kind === "generate" ? "Generating your plan" : "Revising your plan";
+    const prefix = heading ? `${heading}: ` : "";
+    const verb = `${prefix}${draft.kind === "generate" ? "Generating your plan" : "Revising your plan"}`;
     if (draft.status === "running") {
-      const progress = view.progress;
+      const progress = plan.progress;
       status.textContent = `${verb}… ${progress ? `(${progress.status}, step ${progress.turns}${progress.activity ? `: ${progress.activity}` : ""})` : ""} This can take a few minutes.`;
       this.root.append(actions);
       this.button(actions, "Cancel", "ghost", run("draft-discard"));
@@ -115,8 +133,8 @@ export class DraftPanel {
     const curriculum = draft.curriculum;
     const topics = curriculum.modules.flatMap(module => module.topics);
     const sessions = topics.reduce((sum, topic) => sum + topic.sessions, 0);
-    const perWeek = Math.max(1, view.profile.weekdays.length);
-    status.textContent = `Draft ready: "${curriculum.title}" — ${curriculum.modules.length} modules, ${topics.length} topics, ${sessions} sessions (≈ ${Math.ceil(sessions / perWeek)} weeks at ${perWeek}/week, before reviews).`;
+    const perWeek = Math.max(1, plan.profile.weekdays.length);
+    status.textContent = `${prefix}Draft ready: "${curriculum.title}" — ${curriculum.modules.length} modules, ${topics.length} topics, ${sessions} sessions (≈ ${Math.ceil(sessions / perWeek)} weeks at ${perWeek}/week, before reviews).`;
     if (curriculum.summary) this.root.append(el(doc, "p", "lp-draft__summary", curriculum.summary));
     if (draft.kind === "revise") this.root.append(el(doc, "p", "lp-hint", "Completed topics stay as they are; this replaces the unfinished part."));
     const outline = el(doc, "ol", "lp-draft__outline");

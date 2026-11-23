@@ -120,22 +120,23 @@ export function blockSlot(block: Block): Slot {
   return { key: `${block.topicId}:${block.part}`, date: block.start, kind: "topic", topicId: block.topicId, part: block.part, of: block.of, state: block.state };
 }
 
-export type WeekBar = { block: Block; col: number; span: number; lane: number; fromPrev: boolean; toNext: boolean };
+export type WeekBar<T extends { start: string; end: string }> = { item: T; col: number; span: number; lane: number; fromPrev: boolean; toNext: boolean };
 
-/** Lay a week's blocks (Monday first) onto stacked lanes, clipped to the week. */
-export function layoutWeek(blocks: readonly Block[], weekStart: string): { bars: WeekBar[]; lanes: number } {
+/** Lay a week's calendar items (Monday first) onto stacked lanes, clipped to the week. Items
+ * on the same day, from any plan, each get their own lane so they stack. Ties keep input order. */
+export function layoutWeek<T extends { start: string; end: string }>(items: readonly T[], weekStart: string): { bars: WeekBar<T>[]; lanes: number } {
   const dayIndex = (date: string) => Math.round((toUtc(date) - toUtc(weekStart)) / 86_400_000);
-  const inWeek = blocks
-    .filter(block => dayIndex(block.end) >= 0 && dayIndex(block.start) <= 6)
+  const inWeek = items
+    .filter(item => dayIndex(item.end) >= 0 && dayIndex(item.start) <= 6)
     .sort((a, b) => a.start.localeCompare(b.start) || b.end.localeCompare(a.end));
   const laneEnds: number[] = [];
-  const bars = inWeek.map((block): WeekBar => {
-    const col = Math.max(0, dayIndex(block.start));
-    const last = Math.min(6, dayIndex(block.end));
+  const bars = inWeek.map((item): WeekBar<T> => {
+    const col = Math.max(0, dayIndex(item.start));
+    const last = Math.min(6, dayIndex(item.end));
     let lane = laneEnds.findIndex(end => end < col);
     if (lane < 0) lane = laneEnds.length;
     laneEnds[lane] = last;
-    return { block, col, span: last - col + 1, lane, fromPrev: dayIndex(block.start) < 0, toNext: dayIndex(block.end) > 6 };
+    return { item, col, span: last - col + 1, lane, fromPrev: dayIndex(item.start) < 0, toNext: dayIndex(item.end) > 6 };
   });
   return { bars, lanes: laneEnds.length };
 }

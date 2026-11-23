@@ -7,13 +7,13 @@
   --lp-done: #16a34a;
   --lp-overdue: #dc2626;
   --lp-today: #2563eb;
-  --lp-review: #9333ea;
   color: var(--lp-fg);
   font-size: 0.875rem;
   line-height: 1.5;
 }
 .lp-view { display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem; max-width: 72rem; margin: 0 auto; box-sizing: border-box; }
-.lp-settings { display: flex; flex-direction: column; gap: 1.25rem; }
+.lp-settings, .lp-settings__plan { display: flex; flex-direction: column; gap: 1.25rem; }
+.lp-settings__plan[hidden], .lp-tabs[hidden] { display: none; }
 .lp-title { margin: 0; font-size: 1.15rem; font-weight: 600; }
 .lp-section h3, .lp-month { margin: 0 0 0.35rem; font-size: 0.95rem; font-weight: 600; }
 .lp-hint { margin: 0; color: var(--lp-muted); font-size: 0.8rem; }
@@ -61,7 +61,18 @@
 .lp-tab[aria-selected="true"] { color: var(--lp-fg); border-bottom-color: var(--lp-fg); }
 .lp-howto { margin: 0.25rem 0 0; padding: 0.5rem 0.75rem; border-left: 3px solid var(--lp-today); border-radius: 0.25rem; background: color-mix(in oklab, var(--lp-today) 10%, transparent); font-size: 0.8rem; }
 .lp-progress { height: 0.35rem; margin-top: 0.4rem; border-radius: 999px; background: color-mix(in oklab, var(--lp-fg) 12%, transparent); overflow: hidden; }
-.lp-progress__fill { height: 100%; background: var(--lp-done); }
+.lp-progress__fill { height: 100%; background: var(--lp-plan, var(--lp-done)); }
+
+/* Courses: each has a fixed colour (--lp-plan, set from its stored hue) */
+.lp-swatch { display: inline-block; flex: none; width: 0.7rem; height: 0.7rem; margin-right: 0.4rem; border-radius: 999px; background: var(--lp-plan, var(--lp-muted)); vertical-align: -0.05em; }
+.lp-title { display: flex; align-items: center; }
+.lp-tabs--plans { flex-wrap: wrap; }
+.lp-tabs--plans .lp-tab { display: inline-flex; align-items: center; font-size: 0.8rem; }
+.lp-plan-row { margin-top: 0.4rem; }
+.lp-plan-row__name { display: flex; align-items: center; }
+.lp-drafts { display: flex; flex-direction: column; gap: 0.5rem; }
+.lp-drafts:empty { display: none; }
+.lp-field--name { max-width: 24rem; }
 
 /* Calendar */
 .lp-month-nav { display: flex; gap: 0.25rem; align-items: center; }
@@ -94,17 +105,33 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.lp-chip--upcoming { border-left-color: var(--lp-muted); }
-.lp-chip--today { border-left-color: var(--lp-today); background: color-mix(in oklab, var(--lp-today) 20%, transparent); }
-.lp-chip--overdue { border-left-color: var(--lp-overdue); background: color-mix(in oklab, var(--lp-overdue) 16%, transparent); }
-.lp-chip--done { border-left-color: var(--lp-done); color: var(--lp-muted); text-decoration: line-through; }
-.lp-chip--review { border-left-color: var(--lp-review); font-style: italic; }
+/* Chips take the course colour; today/upcoming look the same (today is the circled day number).
+ * Done gets a green check and overdue a red "!" badge, both drawn in CSS so the text stays plain. */
+.lp-chip { border-left-color: var(--lp-plan, var(--lp-muted)); background: color-mix(in oklab, var(--lp-plan, var(--lp-fg)) 20%, transparent); }
+.lp-chip--review { font-style: italic; }
 .lp-chip--past { opacity: 0.6; }
+.lp-chip--done { color: var(--lp-muted); }
+.lp-chip--done::before, .lp-key--done::before { content: "✓"; margin-right: 0.3em; color: var(--lp-done); font-style: normal; font-weight: 700; }
+.lp-chip--overdue::before, .lp-key--overdue::before {
+  content: "!";
+  display: inline-block;
+  width: 1.15em;
+  height: 1.15em;
+  margin-right: 0.35em;
+  border-radius: 999px;
+  background: var(--lp-overdue);
+  color: #fff;
+  font-size: 0.85em;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.15em;
+  text-align: center;
+}
 .lp-bar, .lp-chip--cell { z-index: 1; align-self: start; width: auto; margin: 0 0.25rem 0.2rem; }
 .lp-bar--from-prev { margin-left: 0; border-left-width: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .lp-bar--to-next { margin-right: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
-.lp-legend { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.lp-legend .lp-chip { width: auto; cursor: default; text-decoration: none; }
+.lp-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; color: var(--lp-muted); font-size: 0.8rem; }
+.lp-key { display: inline-flex; align-items: center; }
 
 /* Curriculum editor */
 .lp-section { display: flex; flex-direction: column; gap: 0.35rem; }

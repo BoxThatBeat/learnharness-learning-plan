@@ -1,4 +1,4 @@
-import { LIMITS, allTopics, findTopic, type Plan, type Profile } from "./plan-model.ts";
+import { LIMITS, allTopics, entryName, findTopic, type Plan, type PlanEntry, type Profile } from "./plan-model.ts";
 import type { Schedule, Slot } from "./schedule.ts";
 
 export const GENERATE_WORKER_ID = "plan-generate-v1";
@@ -89,26 +89,50 @@ function describeSlot(plan: Plan, slot: Slot): string {
   return `${slot.date}: ${topic?.title ?? slot.topicId} [${slot.topicId}]${slot.of > 1 ? ` (session ${slot.part}/${slot.of})` : ""}${slot.state === "overdue" ? " — overdue" : ""}`;
 }
 
+/** A course the agent can see: an active (unarchived) plan with its schedule. */
+export type ActivePlan = { entry: PlanEntry & { plan: Plan }; schedule: Schedule };
+
+/** The item to offer or start when the learner doesn't name a plan: the oldest overdue item,
+ * else the earliest scheduled one, across all courses (ties go to the earlier course). */
+export function pickCurrent(plans: readonly ActivePlan[]): { active: ActivePlan; slot: Slot } | null {
+  let best: { active: ActivePlan; slot: Slot } | null = null;
+  for (const active of plans) {
+    const slot = active.schedule.current;
+    if (!slot) continue;
+    const better = !best || (slot.state === "overdue" && best.slot.state !== "overdue")
+      || ((slot.state === "overdue") === (best.slot.state === "overdue") && slot.date < best.slot.date);
+    if (better) best = { active, slot };
+  }
+  return best;
+}
+
 /** System-prompt contribution for teacher/practice agents. A new session has no ID until its
  * first message, so the "Today's topic" button can't be used there; the agent offers the plan
  * itself and links the session with the start tool. */
-export function buildInstructions(plan: Plan, profile: Profile, schedule: Schedule, today: string, agent: "teacher" | "practice"): string {
-  const next = schedule.slots.filter(slot => slot.state !== "done" && slot.state !== "past").slice(0, 4).map(slot => describeSlot(plan, slot));
-  const done = schedule.stats.topicsDone;
+export function buildInstructions(plans: readonly ActivePlan[], today: string, agent: "teacher" | "practice"): string {
+  const many = plans.length > 1;
+  const lines = plans.map(({ entry, schedule }) => {
+    const next = schedule.slots.filter(slot => slot.state !== "done" && slot.state !== "past").slice(0, 4).map(slot => describeSlot(entry.plan, slot));
+    const progress = `${schedule.stats.topicsDone} of ${schedule.stats.topics} topics done${many ? "" : `; today is ${today}`}`;
+    return `"${entryName(entry)}"${many ? ` [${entry.id}]` : ""} (${progress}). Upcoming: ${next.join("; ") || "nothing scheduled"}.`;
+  });
   const role = agent === "teacher"
     ? "teach that topic toward its objectives within the stated session length"
     : "pose practice on that topic (or, for a review, a mix of the listed topics)";
-  const current = schedule.current ? describeSlot(plan, schedule.current) : null;
+  const currents = plans.flatMap(({ entry, schedule }) => schedule.current ? [`${many ? `"${entryName(entry)}": ` : ""}${describeSlot(entry.plan, schedule.current)}`] : []);
   const action = agent === "teacher" ? "teaching" : "posing practice";
+  const header = many
+    ? `The learner follows ${plans.length} learning plans in parallel (today is ${today}): ${lines.join(" ")}`
+    : `The learner follows a learning plan: ${lines[0]}`;
   return [
-    `The learner follows a learning plan: "${plan.title}" (${done} of ${schedule.stats.topics} topics done; today is ${today}). Upcoming: ${next.join("; ") || "nothing scheduled"}.`,
+    header,
     `When a learner message starts with ${BRIEF_PREFIX}, they are kicking off that planned item: ${role}, connecting it to what they already covered.`,
-    current ? `A session can also open without ${BRIEF_PREFIX}, e.g. with a greeting, "go", "start today's topic", "what's next?" or a plan topic's title or ID. Then, unless the message is about something specific outside the plan, your first reply offers today's planned item (${current}) and asks whether to start it or another topic; skip the question if they already asked for today's topic or named one. When they choose a planned item, call ${START_TOOL_NAME} (omit topicId for today's item) before ${action}: it links this session to the topic in their calendar and returns the brief to follow, as with a ${BRIEF_PREFIX} message.` : "",
-    `When the learner has demonstrably met a planned topic's objectives, call ${COMPLETE_TOOL_NAME} (topicId optional in a session linked to a topic) with a one-line note; do not mark topics done just because they were discussed. Use ${OVERVIEW_TOOL_NAME} for the full curriculum. Otherwise, follow the learner's lead; the plan is guidance, not a constraint.`,
+    currents.length ? `A session can also open without ${BRIEF_PREFIX}, e.g. with a greeting, "go", "start today's topic", "what's next?" or a plan topic's title or ID. Then, unless the message is about something specific outside the plan${many ? "s" : ""}, your first reply offers today's planned item${many ? "s" : ""} (${currents.join("; ")}) and asks whether to start ${many ? "one of them" : "it"} or another topic; skip the question if they already asked for today's topic or named one. When they choose a planned item, call ${START_TOOL_NAME} (omit topicId for the most pressing item${many ? "; pass planId to pick a plan's own item" : ""}) before ${action}: it links this session to the topic in their calendar and returns the brief to follow, as with a ${BRIEF_PREFIX} message.` : "",
+    `When the learner has demonstrably met a planned topic's objectives, call ${COMPLETE_TOOL_NAME} (topicId optional in a session linked to a topic) with a one-line note; do not mark topics done just because they were discussed. Use ${OVERVIEW_TOOL_NAME} for the full curriculum${many ? " (all plans, or one with planId)" : ""}. Otherwise, follow the learner's lead; the plan is guidance, not a constraint.`,
   ].filter(Boolean).join(" ");
 }
 
-export function overviewText(plan: Plan, schedule: Schedule): string {
+export function overviewText(plan: Plan, schedule: Schedule, name = plan.title): string {
   const dates = new Map<string, string>();
   for (const slot of schedule.slots) if (slot.kind === "topic" && !dates.has(slot.topicId)) dates.set(slot.topicId, slot.date);
   const lines = plan.modules.map(module => `## ${module.title}\n${module.topics.map(topic => {
@@ -116,5 +140,5 @@ export function overviewText(plan: Plan, schedule: Schedule): string {
     return `- [${topic.id}] ${topic.title} (${topic.sessions} session${topic.sessions === 1 ? "" : "s"}, ${when})${topic.objectives.length ? `\n  Objectives: ${topic.objectives.join("; ")}` : ""}`;
   }).join("\n")}`);
   const total = allTopics(plan).length;
-  return `${plan.title} — ${schedule.stats.topicsDone}/${total} topics done${schedule.stats.endDate ? `, projected end ${schedule.stats.endDate}` : ""}.\n${plan.summary}\n\n${lines.join("\n\n")}`;
+  return `${name} — ${schedule.stats.topicsDone}/${total} topics done${schedule.stats.endDate ? `, projected end ${schedule.stats.endDate}` : ""}.\n${plan.summary}\n\n${lines.join("\n\n")}`;
 }

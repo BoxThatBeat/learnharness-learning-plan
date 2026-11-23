@@ -1,7 +1,7 @@
 import type { PluginFrontendContext, PluginWidgetHandle } from "learnharness-plugin-api";
 import { allTopics, findTopic } from "./plan-model.ts";
 import { brief, slotForTopic, type Slot } from "./schedule.ts";
-import { el, message, type StateView } from "./ui-common.ts";
+import { el, message, planActive, planLabel, type PlanView, type StateView } from "./ui-common.ts";
 
 type Armed = { topicId: string | null; brief: string };
 
@@ -52,27 +52,34 @@ export function setupKickoff(ctx: PluginFrontendContext, openPlan: () => void): 
         void ctx.call<StateView>("get-state").then(view => {
           if (signal.aborted) return;
           body.replaceChildren();
-          const plan = view.plan;
-          if (!plan) {
+          const plans = planActive(view).filter(entry => entry.plan);
+          if (!plans.length) {
             body.append(el(doc, "p", undefined, "You don't have a learning plan yet. Create one in the Learning plan settings."));
             const actions = el(doc, "div", "lp-actions");
             body.append(actions);
             button(actions, "Open Learning plan", "default", () => { close(); openPlan(); });
             return;
           }
-          const current = view.schedule.current;
-          const options: { value: string; label: string; slot: () => Slot | null }[] = [];
-          if (current) {
+          const many = plans.length > 1;
+          const named = (entry: PlanView, text: string) => many ? `${planLabel(entry)} · ${text}` : text;
+          const options: { value: string; label: string; entry: PlanView; slot: () => Slot | null }[] = [];
+          // Each course's own next item first; the oldest overdue one across courses leads.
+          const nexts = plans.flatMap(entry => entry.schedule.current ? [{ entry, current: entry.schedule.current }] : [])
+            .sort((a, b) => Number(b.current.state === "overdue") - Number(a.current.state === "overdue") || a.current.date.localeCompare(b.current.date));
+          for (const { entry, current } of nexts) {
+            const plan = entry.plan!;
             const label = current.kind === "review"
               ? `Scheduled ${current.date}: review session`
               : `Scheduled ${current.date}${current.state === "overdue" ? " (overdue)" : ""}: ${findTopic(plan, current.topicId)?.topic.title ?? current.topicId}`;
-            options.push({ value: "current", label, slot: () => current.kind === "review" ? current : slotForTopic(plan, current.topicId, view.today) });
+            options.push({ value: `current:${entry.id}`, label: named(entry, label), entry, slot: () => current.kind === "review" ? current : slotForTopic(plan, current.topicId, view.today) });
           }
-          for (const topic of allTopics(plan).filter(candidate => candidate.status !== "done")) {
-            options.push({ value: topic.id, label: `${topic.id} — ${topic.title}`, slot: () => slotForTopic(plan, topic.id, view.today) });
+          for (const entry of plans) {
+            for (const topic of allTopics(entry.plan).filter(candidate => candidate.status !== "done")) {
+              options.push({ value: topic.id, label: named(entry, `${topic.id} — ${topic.title}`), entry, slot: () => slotForTopic(entry.plan!, topic.id, view.today) });
+            }
           }
           if (!options.length) {
-            body.append(el(doc, "p", undefined, "Every topic in your plan is done. Revise the plan to add more."));
+            body.append(el(doc, "p", undefined, "Every topic in your plans is done. Revise a plan to add more."));
             return;
           }
           const label = el(doc, "label", "lp-label", "Start");
@@ -88,8 +95,9 @@ export function setupKickoff(ctx: PluginFrontendContext, openPlan: () => void): 
           const status = el(doc, "p", "lp-hint");
           status.setAttribute("role", "status");
           const chosen = () => {
-            const slot = options.find(option => option.value === select.value)?.slot() ?? null;
-            return slot ? { slot, text: brief(plan, slot, view.profile, kind) } : null;
+            const option = options.find(candidate => candidate.value === select.value);
+            const slot = option?.slot() ?? null;
+            return option && slot ? { slot, text: brief(option.entry.plan!, slot, option.entry.profile, kind) } : null;
           };
           const render = () => { preview.textContent = chosen()?.text ?? ""; };
           select.addEventListener("change", render);

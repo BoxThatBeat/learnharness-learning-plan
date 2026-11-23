@@ -10,22 +10,35 @@ your study days, and start each day's topic from a teaching or practice session.
 
 ## Features
 
-- **Settings → Learning plan**
+- **Several plans.** Keep as many courses as you like (up to 20), each with its own
+  schedule, goal, planning model and curriculum.
+  - **Settings → Learning plan** has a tab per plan plus **Add plan**, **Archive plan** /
+    **Unarchive plan** and **Remove plan** (removing asks first and offers to archive
+    instead). **Archived** plans disappear from the calendar, the curriculum tabs, the
+    "Today's topic" picker and the teacher, but keep their full state (progress,
+    curriculum, settings) and can be restored any time.
+  - Every plan gets a colour when it is created, chosen to be far from the colours already
+    in use (the middle of the widest gap on the hue wheel, with some randomness). It is
+    stored and never changes, even after archiving or a restart.
+- **Settings → Learning plan** (per plan)
   - Pick your study days (sessions per week = days ticked), session length, start
     date, review frequency, and what happens when you fall behind.
   - Describe your background and goal, then press **Generate plan**. A planning
     worker uses the model's knowledge of how good universities structure the field.
     It can also read specific public syllabus pages with a built-in `fetch_url` tool.
-  - The result arrives as a **draft** you review before accepting.
+  - The result arrives as a **draft** you review before accepting. Plans draft independently.
 - **Sidebar tab "Learning plan"**
-  - **Calendar:** a month view with topics colour-coded as today, upcoming, overdue,
-    done or review. A multi-session topic is one bar stretching across the days of
-    its sessions, like an event in Google Calendar. Click a topic for its objectives, resources and linked sessions,
-    and to mark it done or not done.
-  - **Curriculum:** rename, reorder, add or remove topics and set how many sessions
-    each needs. **Revise with AI** rewrites only the unfinished part, for example
+  - **Calendar:** a month view showing the sessions of all active plans together, each in
+    its plan's colour. Sessions that fall on the same day stack. A multi-session topic is one
+    bar stretching across the days of its sessions, like an event in Google Calendar. Today
+    is the blue circled day number. A green ✓ marks completed sessions and a red ! badge
+    marks overdue ones; reviews are labelled "Review". Click a topic for its objectives,
+    resources and linked sessions, and to mark it done or not done.
+  - **Curriculum:** a tab per plan. Rename, reorder, add or remove topics and set how many
+    sessions each needs. **Revise with AI** rewrites only the unfinished part, for example
     "more RF, add a PCB design module". Completed topics and in-progress topics with
-    unchanged titles keep their progress.
+    unchanged titles keep their progress. Unsaved edits are kept per plan while you switch
+    tabs. **Archive plan** is also available here.
 - **Starting a topic**
   - **In a new session:** open a Teaching or Practice session and type
     "start today's topic" as your first message, or "start t-12" for a specific
@@ -42,10 +55,13 @@ your study days, and start each day's topic from a teaching or practice session.
     session, and its top bar, when you send the first message.
   - Linked sessions can be opened later from the topic in the calendar.
 - **Teacher integration**
-  - Teacher and practice agents see the plan and the upcoming items.
+  - Teacher and practice agents see every active plan and its upcoming items.
   - They can call `learning_plan_complete_topic` once you've demonstrably met a
     topic's objectives. In a session linked to a topic, the topic is inferred.
-  - `learning_plan_overview` shows them the full curriculum.
+  - `learning_plan_overview` shows them the full curriculum of every active plan (or one,
+    with `planId`). Topic IDs (`t-N`) are unique across plans, so naming a topic is
+    enough; `learning_plan_start_topic` without a topic starts the most pressing item across
+    plans (oldest overdue, else earliest), or a given plan's with `planId`.
 
 ## Scheduling
 
@@ -82,11 +98,13 @@ a guarantee against DNS-rebinding attacks.
 
 ## Data
 
-`<plugin data>/plan.json` holds your profile, the plan and any pending draft.
+`<plugin data>/plan.json` holds every plan with its settings, colour, archived flag,
+curriculum and any pending draft. A file from the single-plan version (format 1) is
+migrated to one plan on load and rewritten in the new format on the next change.
 - Writes are atomic.
 - If the file is unreadable or uses a newer format, the plugin leaves it untouched
   and shows the error.
-- Topic IDs (`t-N`) are stable and never reused.
+- Plan (`p-N`), module and topic (`t-N`) IDs are stable and never reused.
 
 ## Install from GitHub
 

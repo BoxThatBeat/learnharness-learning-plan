@@ -1,7 +1,7 @@
 /** Pure plan model: saved state, validation, curriculum → plan conversion, revision
  * merging and manual edits. No I/O; shared by backend, frontend and tests. */
 
-export const STATE_VERSION = 1;
+export const STATE_VERSION = 2;
 export const LIMITS = {
   modules: 30,
   topicsPerModule: 40,
@@ -15,6 +15,8 @@ export const LIMITS = {
   revisionPrompt: 4_000,
   note: 1_000,
   summary: 2_000,
+  planName: 80,
+  plans: 20,
 } as const;
 
 export type ModelChoice = { provider: string; id: string };
@@ -74,11 +76,25 @@ export type Draft =
   | { status: "ready"; kind: DraftKind; requestId: string; curriculum: Curriculum }
   | { status: "failed"; kind: DraftKind; requestId: string; error: string };
 
-export type PlanState = {
-  version: typeof STATE_VERSION;
+/** One planned course: its own settings, curriculum and AI draft. */
+export type PlanEntry = {
+  /** Stable ID (`p-N`); never reused. */
+  id: string;
+  /** The learner's name for the course; blank falls back to the curriculum title. */
+  name: string;
+  /** Calendar colour as an HSL hue (0–360). Chosen once when the course is created, never changed. */
+  hue: number;
+  /** Archived courses are hidden everywhere but keep their full state. */
+  archived: boolean;
   profile: Profile;
   plan: Plan | null;
   draft: Draft | null;
+};
+
+export type PlanState = {
+  version: typeof STATE_VERSION;
+  plans: PlanEntry[];
+  /** Shared by plans, modules and topics, so topic IDs (`t-N`) are unique across all courses. */
   nextId: number;
 };
 
@@ -110,8 +126,53 @@ export function defaultProfile(today: string): Profile {
   };
 }
 
-export function emptyState(today: string): PlanState {
-  return { version: STATE_VERSION, profile: defaultProfile(today), plan: null, draft: null, nextId: 1 };
+export function emptyState(): PlanState {
+  return { version: STATE_VERSION, plans: [], nextId: 1 };
+}
+
+/** Pick a hue for a new course: the middle of the widest gap between the hues already in use
+ * (archived ones included, so a course never changes colour or clashes after unarchiving), with
+ * some random jitter. With `n` courses the nearest neighbour is always at least ~0.35 × (360/n)
+ * away, and the first course gets a random hue. */
+export function pickHue(used: readonly number[], rand: () => number = Math.random): number {
+  if (!used.length) return Math.floor(rand() * 360) % 360;
+  const sorted = [...used].map(hue => ((hue % 360) + 360) % 360).sort((a, b) => a - b);
+  let start = sorted[0]!;
+  let gap = 0;
+  sorted.forEach((hue, index) => {
+    const next = index + 1 < sorted.length ? sorted[index + 1]! : sorted[0]! + 360;
+    if (next - hue > gap) { gap = next - hue; start = hue; }
+  });
+  const jitter = (rand() - 0.5) * 0.3;
+  return Math.round(((start + gap * (0.5 + jitter)) % 360 + 360) % 360);
+}
+
+export function newEntry(state: PlanState, today: string, rand: () => number = Math.random): { state: PlanState; entry: PlanEntry } {
+  if (state.plans.length >= LIMITS.plans) throw new Error(`At most ${LIMITS.plans} plans are supported. Remove one first.`);
+  const entry: PlanEntry = {
+    id: `p-${state.nextId}`, name: "", hue: pickHue(state.plans.map(plan => plan.hue), rand), archived: false,
+    profile: defaultProfile(today), plan: null, draft: null,
+  };
+  return { state: { ...state, nextId: state.nextId + 1, plans: [...state.plans, entry] }, entry };
+}
+
+export const activeEntries = (state: PlanState): PlanEntry[] => state.plans.filter(entry => !entry.archived);
+export const findEntry = (state: PlanState, id: string): PlanEntry | null => state.plans.find(entry => entry.id === id) ?? null;
+export const entryName = (entry: Pick<PlanEntry, "name" | "plan">): string => entry.name || entry.plan?.title || "Untitled plan";
+
+export function updateEntry(state: PlanState, id: string, update: (entry: PlanEntry) => PlanEntry): PlanState {
+  if (!findEntry(state, id)) throw new Error("That plan no longer exists.");
+  return { ...state, plans: state.plans.map(entry => entry.id === id ? update(entry) : entry) };
+}
+
+/** The course a topic belongs to. Topic IDs are unique across courses; archived courses are
+ * skipped unless asked for. */
+export function entryOfTopic(state: PlanState, topicId: string, includeArchived = false): PlanEntry | null {
+  return state.plans.find(entry => (includeArchived || !entry.archived) && findTopic(entry.plan, topicId)) ?? null;
+}
+
+export function readName(value: unknown): string {
+  return text(value ?? "", "Plan name", LIMITS.planName, false);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -266,17 +327,57 @@ function readDraft(value: unknown): Draft | null {
   throw new Error("Saved draft is malformed.");
 }
 
-/** Parse saved state; refuses newer formats rather than rewriting them. */
+function entryIds(entry: PlanEntry): string[] {
+  return [entry.id, ...(entry.plan?.modules ?? []).flatMap(module => [module.id, ...module.topics.map(topic => topic.id)])];
+}
+
+function readEntry(value: unknown, index: number): PlanEntry {
+  if (!isRecord(value) || typeof value.id !== "string" || !/^p-\d+$/.test(value.id)) throw new Error(`Saved plan ${index + 1} has no valid ID.`);
+  const hue = typeof value.hue === "number" && Number.isFinite(value.hue) ? ((value.hue % 360) + 360) % 360 : (index * 137.508) % 360;
+  return {
+    id: value.id,
+    name: typeof value.name === "string" ? value.name.trim().slice(0, LIMITS.planName) : "",
+    hue: Math.round(hue),
+    archived: value.archived === true,
+    profile: readProfile(value.profile),
+    plan: readPlan(value.plan),
+    draft: readDraft(value.draft),
+  };
+}
+
+/** Parse saved state; refuses newer formats rather than rewriting them. Format 1 (a single
+ * plan) is migrated in memory and written as format 2 on the next change. */
 export function parseState(raw: unknown): PlanState {
   if (!isRecord(raw) || typeof raw.version !== "number") throw new Error("Saved learning plan data has no version.");
   if (raw.version > STATE_VERSION) {
     throw new Error(`Saved learning plan data uses format ${raw.version}, newer than this plugin understands (${STATE_VERSION}). Update the plugin; the file was not changed.`);
   }
-  if (raw.version !== STATE_VERSION) throw new Error(`Unsupported learning plan data format ${raw.version}.`);
-  const plan = readPlan(raw.plan);
-  const highest = plan ? Math.max(0, ...plan.modules.flatMap(module => [module, ...module.topics]).map(entry => Number(entry.id.slice(2)))) : 0;
-  const nextId = typeof raw.nextId === "number" && Number.isSafeInteger(raw.nextId) && raw.nextId > highest ? raw.nextId : highest + 1;
-  return { version: STATE_VERSION, profile: readProfile(raw.profile), plan, draft: readDraft(raw.draft), nextId };
+  let plans: PlanEntry[];
+  let storedNext: unknown = raw.nextId;
+  if (raw.version === 1) {
+    const plan = readPlan(raw.plan);
+    const profile = readProfile(raw.profile);
+    const draft = readDraft(raw.draft);
+    const highest = highestId(plan ? [{ id: "p-0", plan } as PlanEntry] : []);
+    const next = typeof storedNext === "number" && Number.isSafeInteger(storedNext) && storedNext > highest ? storedNext : highest + 1;
+    plans = plan || draft || profile.goalPrompt ? [{ id: `p-${next}`, name: "", hue: 212, archived: false, profile, plan, draft }] : [];
+    storedNext = next + 1;
+  } else if (raw.version === STATE_VERSION) {
+    if (!Array.isArray(raw.plans)) throw new Error("Saved plans are malformed.");
+    plans = raw.plans.map(readEntry);
+  } else throw new Error(`Unsupported learning plan data format ${raw.version}.`);
+  const seen = new Set<string>();
+  for (const id of plans.flatMap(entryIds)) {
+    if (seen.has(id)) throw new Error(`Saved plans have duplicate ID ${id}.`);
+    seen.add(id);
+  }
+  const highest = highestId(plans);
+  const nextId = typeof storedNext === "number" && Number.isSafeInteger(storedNext) && storedNext > highest ? storedNext : highest + 1;
+  return { version: STATE_VERSION, plans, nextId };
+}
+
+function highestId(plans: readonly PlanEntry[]): number {
+  return Math.max(0, ...plans.flatMap(entryIds).map(id => Number(id.slice(2))));
 }
 
 export function allTopics(plan: Plan | null): Topic[] {
@@ -292,8 +393,12 @@ export function findTopic(plan: Plan | null, topicId: string): { module: Module;
 }
 
 /** The most recently linked topic for a session, if any. */
-export function topicForSession(plan: Plan | null, sessionId: string): Topic | null {
-  return allTopics(plan).find(topic => topic.sessionIds.includes(sessionId)) ?? null;
+export function topicForSession(state: PlanState, sessionId: string): { entry: PlanEntry; topic: Topic } | null {
+  for (const entry of activeEntries(state)) {
+    const topic = allTopics(entry.plan).find(candidate => candidate.sessionIds.includes(sessionId));
+    if (topic) return { entry, topic };
+  }
+  return null;
 }
 
 const normalize = (value: string) => value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
@@ -302,29 +407,27 @@ function freshTopic(id: string, source: Curriculum["modules"][number]["topics"][
   return { id, title: source.title, objectives: source.objectives, sessions: source.sessions, resources: source.resources, status: "todo", completedAt: null, completionNote: "", sessionIds: [] };
 }
 
-/** Replace the plan with a newly generated curriculum. */
-export function acceptGenerated(state: PlanState, curriculum: Curriculum, now: string, planId: string): PlanState {
+/** Replace a course's plan with a newly generated curriculum. */
+export function acceptGenerated(state: PlanState, entryId: string, curriculum: Curriculum, now: string, planId: string): PlanState {
   let nextId = state.nextId;
   const modules = curriculum.modules.map(module => ({
     id: `m-${nextId++}`,
     title: module.title,
     topics: module.topics.map(topic => freshTopic(`t-${nextId++}`, topic)),
   }));
-  return {
-    ...state,
-    nextId,
-    plan: { id: planId, title: curriculum.title, summary: curriculum.summary, createdAt: now, sources: curriculum.sources, modules },
-  };
+  const next = updateEntry(state, entryId, entry => ({ ...entry, plan: { id: planId, title: curriculum.title, summary: curriculum.summary, createdAt: now, sources: curriculum.sources, modules } }));
+  return { ...next, nextId };
 }
 
 /** Merge a revised curriculum for the unfinished part. Completed topics are kept as they
  * were; unfinished topics whose titles match keep their IDs and linked sessions. */
-export function acceptRevision(state: PlanState, curriculum: Curriculum): PlanState {
-  if (!state.plan) throw new Error("There is no plan to revise.");
+export function acceptRevision(state: PlanState, entryId: string, curriculum: Curriculum): PlanState {
+  const plan = findEntry(state, entryId)?.plan;
+  if (!plan) throw new Error("There is no plan to revise.");
   let nextId = state.nextId;
-  const todoByTitle = new Map(allTopics(state.plan).filter(topic => topic.status === "todo").map(topic => [normalize(topic.title), topic]));
+  const todoByTitle = new Map(allTopics(plan).filter(topic => topic.status === "todo").map(topic => [normalize(topic.title), topic]));
   const used = new Set<string>();
-  const doneModules = state.plan.modules
+  const doneModules = plan.modules
     .map(module => ({ ...module, topics: module.topics.filter(topic => topic.status === "done") }))
     .filter(module => module.topics.length);
   const doneByTitle = new Map(doneModules.map(module => [normalize(module.title), module]));
@@ -344,26 +447,27 @@ export function acceptRevision(state: PlanState, curriculum: Curriculum): PlanSt
     return { id: doneModule?.id ?? `m-${nextId++}`, title: module.title, topics: [...(doneModule?.topics ?? []), ...topics] };
   });
   merged.push(...doneModules.filter(module => !consumedDone.has(module.id)), ...revised);
-  return {
-    ...state,
-    nextId,
+  const next = updateEntry(state, entryId, entry => ({
+    ...entry,
     plan: {
-      ...state.plan,
+      ...plan,
       title: curriculum.title,
       summary: curriculum.summary,
-      sources: [...state.plan.sources, ...curriculum.sources.filter(source => !state.plan!.sources.some(old => old.url === source.url))].slice(0, 40),
+      sources: [...plan.sources, ...curriculum.sources.filter(source => !plan.sources.some(old => old.url === source.url))].slice(0, 40),
       modules: merged,
     },
-  };
+  }));
+  return { ...next, nextId };
 }
 
 /** Manual curriculum edit from the plan view. Existing IDs keep their progress. */
-export function applyManualEdit(state: PlanState, input: unknown): PlanState {
-  if (!state.plan) throw new Error("There is no plan to edit.");
+export function applyManualEdit(state: PlanState, entryId: string, input: unknown): PlanState {
+  const plan = findEntry(state, entryId)?.plan;
+  if (!plan) throw new Error("There is no plan to edit.");
   if (!Array.isArray(input)) throw new Error("Expected a list of modules.");
   if (input.length > LIMITS.modules) throw new Error(`At most ${LIMITS.modules} modules are supported.`);
-  const known = new Map(allTopics(state.plan).map(topic => [topic.id, topic]));
-  const knownModules = new Set(state.plan.modules.map(module => module.id));
+  const known = new Map(allTopics(plan).map(topic => [topic.id, topic]));
+  const knownModules = new Set(plan.modules.map(module => module.id));
   const seen = new Set<string>();
   let nextId = state.nextId;
   let count = 0;
@@ -394,18 +498,17 @@ export function applyManualEdit(state: PlanState, input: unknown): PlanState {
     return { id, title: text(module.title, `${label} title`, LIMITS.title), topics };
   }).filter(module => module.topics.length > 0);
   if (count > LIMITS.topics) throw new Error(`At most ${LIMITS.topics} topics are supported.`);
-  return { ...state, nextId, plan: { ...state.plan, modules } };
+  return { ...updateEntry(state, entryId, entry => ({ ...entry, plan: { ...plan, modules } })), nextId };
 }
 
 function updateTopic(state: PlanState, topicId: string, update: (topic: Topic) => Topic): PlanState {
-  if (!state.plan || !findTopic(state.plan, topicId)) throw new Error(`Unknown topic ${topicId}.`);
-  return {
-    ...state,
-    plan: {
-      ...state.plan,
-      modules: state.plan.modules.map(module => ({ ...module, topics: module.topics.map(topic => topic.id === topicId ? update(topic) : topic) })),
-    },
-  };
+  const owner = entryOfTopic(state, topicId, true);
+  if (!owner?.plan) throw new Error(`Unknown topic ${topicId}.`);
+  const plan = owner.plan;
+  return updateEntry(state, owner.id, entry => ({
+    ...entry,
+    plan: { ...plan, modules: plan.modules.map(module => ({ ...module, topics: module.topics.map(topic => topic.id === topicId ? update(topic) : topic) })) },
+  }));
 }
 
 export function setTopicStatus(state: PlanState, topicId: string, done: boolean, today: string, note = ""): PlanState {
