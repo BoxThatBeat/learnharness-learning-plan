@@ -4,7 +4,7 @@ import { Compile } from "typebox/compile";
 import { curriculumSchema } from "../src/contract.ts";
 import {
   acceptGenerated, acceptRevision, allTopics, applyManualEdit, emptyState, entryOfTopic, linkSession, newEntry, parseState, pickHue,
-  readCurriculum, readProfile, setTopicStatus, topicForSession, updateEntry, type Curriculum, type PlanState,
+  planningProblems, readCurriculum, readProfile, setTopicStatus, topicForSession, updateEntry, type Curriculum, type PlanState,
 } from "../src/plan-model.ts";
 
 const curriculum: Curriculum = {
@@ -13,10 +13,10 @@ const curriculum: Curriculum = {
   sources: [{ title: "MIT 6.002", url: "https://ocw.mit.edu/courses/6-002" }],
   modules: [
     { title: "Circuits", topics: [
-      { title: "Ohm's law", objectives: ["a"], sessions: 1, resources: [] },
-      { title: "RC circuits", objectives: ["b"], sessions: 2, resources: [] },
+      { title: "Ohm's law", objectives: ["a"], sessions: 1, lab: false, resources: [] },
+      { title: "RC circuits", objectives: ["b"], sessions: 2, lab: true, resources: [] },
     ] },
-    { title: "RF", topics: [{ title: "Antennas", objectives: ["c"], sessions: 1, resources: [] }] },
+    { title: "RF", topics: [{ title: "Antennas", objectives: ["c"], sessions: 1, lab: false, resources: [] }] },
   ],
 };
 
@@ -106,8 +106,8 @@ test("revisions keep completed topics and the progress of unfinished topics with
   const revised = acceptRevision(state, "p-1", {
     title: "Plan v2", summary: "more RF", sources: [],
     modules: [
-      { title: "Circuits", topics: [{ title: "rc circuits", objectives: ["b2"], sessions: 3, resources: [] }] },
-      { title: "RF", topics: [{ title: "Transmission lines", objectives: ["d"], sessions: 1, resources: [] }, { title: "Antennas", objectives: ["c"], sessions: 1, resources: [] }] },
+      { title: "Circuits", topics: [{ title: "rc circuits", objectives: ["b2"], sessions: 3, lab: true, resources: [] }] },
+      { title: "RF", topics: [{ title: "Transmission lines", objectives: ["d"], sessions: 1, lab: false, resources: [] }, { title: "Antennas", objectives: ["c"], sessions: 1, lab: false, resources: [] }] },
     ],
   });
   const topics = allTopics(planOf(revised));
@@ -144,5 +144,25 @@ test("profile and curriculum validation", () => {
   assert.throws(() => readCurriculum({ ...curriculum, modules: [] }), /no modules/);
   const check = Compile(curriculumSchema);
   assert.equal(check.Check(curriculum), true);
-  assert.equal(check.Check({ ...curriculum, modules: [{ title: "x", topics: [{ title: "y", objectives: ["z"], sessions: 5, resources: [] }] }] }), false);
+  assert.equal(check.Check({ ...curriculum, modules: [{ title: "x", topics: [{ title: "y", objectives: ["z"], sessions: 5, lab: true, resources: [] }] }] }), false);
+});
+
+test("generated curricula: only labs span sessions, and a session covers at most 4 concepts", () => {
+  const topic = (title: string, extra: object) => ({ title, objectives: ["a"], sessions: 1, lab: false, resources: [], ...extra });
+  const make = (...topics: object[]) => ({ ...curriculum, modules: [{ title: "M", topics }] }) as Curriculum;
+  assert.deepEqual(planningProblems(make(topic("Lesson", {}), topic("Build a radio", { lab: true, sessions: 3 }))), []);
+  const long = planningProblems(make(topic("Big lesson", { sessions: 3 })));
+  assert.equal(long.length, 1);
+  assert.match(long[0]!, /"Big lesson" has 3 sessions but is not a lab/);
+  const crowded = planningProblems(make(topic("Crowded", { objectives: ["1", "2", "3", "4", "5"] })));
+  assert.match(crowded[0]!, /"Crowded" lists 5 objectives; a session covers at most 4/);
+  const check = Compile(curriculumSchema);
+  // The schema stays loose on purpose (the Claude CLI rejects schema-invalid calls before the host
+  // sees them, failing the run); the rules above are enforced by the worker's validateResult.
+  assert.equal(check.Check(make(topic("Crowded", { objectives: ["1", "2", "3", "4", "5"] }))), true);
+  assert.equal(check.Check(make(topic("Long", { sessions: 3 }))), true);
+  const { lab: _lab, ...withoutLab } = topic("Lesson", {}) as Record<string, unknown>;
+  assert.equal(check.Check(make(withoutLab)), true);
+  // Older saved plans (and manual edits) without the flag still load, as non-labs.
+  assert.equal(readCurriculum({ ...curriculum, modules: [{ title: "M", topics: [{ title: "T", objectives: ["a"], sessions: 3, resources: [] }] }] }).modules[0]!.topics[0]!.lab, false);
 });

@@ -20,7 +20,7 @@ const curriculum = {
   title: "EE plan", summary: "Circuits first.", sources: [],
   modules: [{ title: "Circuits", topics: [
     { title: "Ohm's law", objectives: ["Apply V=IR"], sessions: 1, resources: [{ title: "Notes", url: "https://example.edu/ohm" }] },
-    { title: "RC circuits", objectives: ["tau"], sessions: 2, resources: [] },
+    { title: "RC circuits", objectives: ["tau"], sessions: 2, lab: true, resources: [] },
   ] }],
 };
 

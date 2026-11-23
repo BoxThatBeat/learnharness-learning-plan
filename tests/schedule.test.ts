@@ -9,10 +9,10 @@ const curriculum: Curriculum = {
   sources: [],
   modules: [
     { title: "Circuits", topics: [
-      { title: "Ohm's law", objectives: ["Apply V=IR"], sessions: 1, resources: [] },
-      { title: "RC circuits", objectives: ["Compute time constants"], sessions: 2, resources: [] },
+      { title: "Ohm's law", objectives: ["Apply V=IR"], sessions: 1, lab: false, resources: [] },
+      { title: "RC circuits", objectives: ["Compute time constants"], sessions: 2, lab: true, resources: [] },
     ] },
-    { title: "RF", topics: [{ title: "Antennas", objectives: [], sessions: 1, resources: [] }] },
+    { title: "RF", topics: [{ title: "Antennas", objectives: [], sessions: 1, lab: false, resources: [] }] },
   ],
 };
 

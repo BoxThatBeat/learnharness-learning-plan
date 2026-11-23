@@ -12,8 +12,8 @@ type Outcome = { status: "succeeded"; result: unknown } | { status: "failed"; er
 const curriculum: Curriculum = {
   title: "EE plan", summary: "s", sources: [],
   modules: [{ title: "Circuits", topics: [
-    { title: "Ohm's law", objectives: ["V=IR"], sessions: 1, resources: [] },
-    { title: "RC circuits", objectives: ["tau"], sessions: 2, resources: [] },
+    { title: "Ohm's law", objectives: ["V=IR"], sessions: 1, lab: false, resources: [] },
+    { title: "RC circuits", objectives: ["tau"], sessions: 2, lab: true, resources: [] },
   ] }],
 };
 
@@ -150,7 +150,7 @@ test("revise keeps completed topics; failed runs are reported; one run at a time
   await assert.rejects(host.call("revise", { planId: "p-1", request: "again" }), /already in progress/);
   assert.equal(host.started[1]!.id, "plan-revise-v1");
   assert.match(host.started[1]!.prompt, /\[done\] Ohm's law[\s\S]*\[todo\] RC circuits[\s\S]*more RF/);
-  host.finish({ status: "succeeded", result: { ...curriculum, modules: [{ title: "RF", topics: [{ title: "Antennas", objectives: ["x"], sessions: 1, resources: [] }] }] } });
+  host.finish({ status: "succeeded", result: { ...curriculum, modules: [{ title: "RF", topics: [{ title: "Antennas", objectives: ["x"], sessions: 1, lab: false, resources: [] }] }] } });
   await flush();
   const accepted = (await host.call("draft-accept", { planId: "p-1" })).plans[0];
   assert.deepEqual(accepted.plan.modules.flatMap((module: { topics: { title: string; status: string }[] }) => module.topics.map(topic => `${topic.title}:${topic.status}`)), ["Ohm's law:done", "Antennas:todo"]);
@@ -187,7 +187,7 @@ test("data persists across restarts and newer formats are never overwritten", as
 
 const second: Curriculum = {
   title: "Math plan", summary: "s", sources: [],
-  modules: [{ title: "Analysis", topics: [{ title: "Limits", objectives: ["epsilon-delta"], sessions: 1, resources: [] }] }],
+  modules: [{ title: "Analysis", topics: [{ title: "Limits", objectives: ["epsilon-delta"], sessions: 1, lab: false, resources: [] }] }],
 };
 
 test("several plans: independent settings and colours, shared agent context, tools route by topic or plan", async () => {
@@ -306,4 +306,18 @@ test("plans plan and fail independently, and a format-1 file is migrated to one 
   assert.deepEqual(migrated.plans.map((plan: { id: string; plan: { title: string } }) => [plan.id, plan.plan.title]), [["p-4", "Old plan"]]);
   await old.call("rename-plan", { planId: "p-4", name: "Renamed" });
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "plan.json"), "utf8")).version, 2);
+});
+
+test("the planning workers reject lessons spanning several sessions and overloaded sessions, with correction feedback", async () => {
+  const host = fakeHost(temp());
+  activate(host.ctx, { now: clock("2026-11-02T12:00:00") });
+  const topic = (extra: object) => ({ title: "T", objectives: ["a"], sessions: 1, lab: false, resources: [], ...extra });
+  const wrap = (...topics: object[]) => ({ ...curriculum, modules: [{ title: "M", topics }] });
+  for (const id of ["plan-generate-v1", "plan-revise-v1"]) {
+    const validate = host.workers.get(id)!.validateResult!;
+    const context = { taskId: "t", input: {}, signal: new AbortController().signal };
+    await validate(wrap(topic({}), topic({ title: "Lab", lab: true, sessions: 3 })), context);
+    await assert.rejects(async () => validate(wrap(topic({ title: "Long lesson", sessions: 2 })), context), /Fix these.*"Long lesson" has 2 sessions but is not a lab/s);
+    await assert.rejects(async () => validate(wrap(topic({ title: "Packed", objectives: ["1", "2", "3", "4", "5"] })), context), /"Packed" lists 5 objectives/);
+  }
 });

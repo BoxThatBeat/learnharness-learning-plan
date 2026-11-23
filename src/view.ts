@@ -6,7 +6,7 @@ import { DraftPanel, el, howToStart, iconButton, message, planActive, planColor,
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const STATE_LABEL: Record<Slot["state"], string> = { done: "Done", overdue: "Overdue", today: "Today", upcoming: "Upcoming", past: "Past review" };
 
-type EditTopic = { id?: string; title: string; objectives: string; sessions: number; status: "todo" | "done" };
+type EditTopic = { id?: string; title: string; objectives: string; sessions: number; lab: boolean; status: "todo" | "done" };
 type EditModule = { id?: string; title: string; topics: EditTopic[] };
 /** Something drawn on the calendar: a topic's block of days or a one-day review, from one course. */
 type CalendarItem = { start: string; end: string; entry: PlanView; block?: Block; review?: Slot };
@@ -307,7 +307,7 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
             ? `${block.start} to ${block.end}${topic.status === "done" ? "" : ` (due ${block.end})`}`
             : slot.date;
           box.append(el(doc, "h2", undefined, topic.title));
-          box.append(el(doc, "p", "lp-hint", `${module.title}${course} · ${topic.id} · ${topic.sessions} session${topic.sessions === 1 ? "" : "s"} · ${when}${topic.status === "done" ? ` · done ${topic.completedAt ?? ""}` : ` · ${STATE_LABEL[slot.state]}`}`));
+          box.append(el(doc, "p", "lp-hint", `${module.title}${course} · ${topic.id} · ${topic.lab ? "lab · " : ""}${topic.sessions} session${topic.sessions === 1 ? "" : "s"} · ${when}${topic.status === "done" ? ` · done ${topic.completedAt ?? ""}` : ` · ${STATE_LABEL[slot.state]}`}`));
           if (topic.objectives.length) {
             box.append(el(doc, "h3", undefined, "Objectives"));
             const list = el(doc, "ul");
@@ -372,7 +372,7 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
   function toEdit(plan: Plan): EditModule[] {
     return plan.modules.map(module => ({
       id: module.id, title: module.title,
-      topics: module.topics.map(topic => ({ id: topic.id, title: topic.title, objectives: topic.objectives.join("\n"), sessions: topic.sessions, status: topic.status })),
+      topics: module.topics.map(topic => ({ id: topic.id, title: topic.title, objectives: topic.objectives.join("\n"), sessions: topic.sessions, lab: topic.lab, status: topic.status })),
     }));
   }
   let dirtyControls: { save?: PluginWidgetHandle<{ disabled?: boolean }>; revert?: PluginWidgetHandle<{ disabled?: boolean }>; revise?: PluginWidgetHandle<{ disabled?: boolean }>; status?: HTMLElement } = {};
@@ -413,7 +413,7 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
 
     const editor = el(doc, "section", "lp-section");
     editor.append(el(doc, "h3", undefined, "Edit curriculum"));
-    editor.append(el(doc, "p", "lp-hint", "Rename, reorder, add or remove topics and set how many sessions each needs. One objective per line. Save to reschedule."));
+    editor.append(el(doc, "p", "lp-hint", "Rename, reorder, add or remove topics. Only labs can take more than one session. One objective per line (a session covers up to 4 concepts). Save to reschedule."));
     const modules = edits.get(entry.id)!;
     modules.forEach((module, mIndex) => {
       const box = el(doc, "div", "lp-module");
@@ -444,9 +444,25 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
         sessions.value = String(topic.sessions);
         sessions.setAttribute("aria-label", `Sessions for ${topic.title}`);
         sessions.title = "Sessions";
-        sessions.addEventListener("input", () => { topic.sessions = Number(sessions.value); markDirty(); });
+        // Only labs span several sessions. An older multi-session lesson stays editable so it can be cut down.
+        const syncSessions = () => { sessions.disabled = !topic.lab && topic.sessions <= 1; };
+        syncSessions();
+        sessions.addEventListener("input", () => { topic.sessions = Number(sessions.value); syncSessions(); markDirty(); });
+        const lab = el(doc, "label", "lp-topic__lab");
+        const labBox = el(doc, "input");
+        labBox.type = "checkbox";
+        labBox.checked = topic.lab;
+        labBox.setAttribute("aria-label", `${topic.title} is a lab`);
+        labBox.addEventListener("change", () => {
+          topic.lab = labBox.checked;
+          if (!topic.lab) { topic.sessions = 1; sessions.value = "1"; }
+          syncSessions();
+          markDirty();
+        });
+        lab.title = "A lab is a hands-on project; only labs can take more than one session.";
+        lab.append(labBox, doc.createTextNode(" Lab"));
         line.append(
-          badge, topicTitle, sessions,
+          badge, topicTitle, lab, sessions,
           iconButton(doc, `Move ${topic.title} up`, "↑", () => { move(module.topics, tIndex, -1); markDirty(); render(); }),
           iconButton(doc, `Move ${topic.title} down`, "↓", () => { move(module.topics, tIndex, 1); markDirty(); render(); }),
           iconButton(doc, `Delete ${topic.title}`, "✕", () => { module.topics.splice(tIndex, 1); markDirty(); render(); }),
@@ -462,13 +478,13 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
       });
       const add = el(doc, "button", "lp-link", "+ Add topic");
       add.type = "button";
-      add.addEventListener("click", () => { module.topics.push({ title: "New topic", objectives: "", sessions: 1, status: "todo" }); markDirty(); render(); });
+      add.addEventListener("click", () => { module.topics.push({ title: "New topic", objectives: "", sessions: 1, lab: false, status: "todo" }); markDirty(); render(); });
       box.append(add);
       editor.append(box);
     });
     const addModule = el(doc, "button", "lp-link", "+ Add module");
     addModule.type = "button";
-    addModule.addEventListener("click", () => { modules.push({ title: "New module", topics: [{ title: "New topic", objectives: "", sessions: 1, status: "todo" }] }); markDirty(); render(); });
+    addModule.addEventListener("click", () => { modules.push({ title: "New module", topics: [{ title: "New topic", objectives: "", sessions: 1, lab: false, status: "todo" }] }); markDirty(); render(); });
     const actions = el(doc, "div", "lp-actions lp-actions--sticky");
     const status = el(doc, "span", "lp-hint", dirty ? "Unsaved changes." : "");
     status.setAttribute("role", "status");
@@ -476,7 +492,7 @@ export function mountPlanView(ctx: PluginFrontendContext, container: HTMLElement
       try {
         const payload = modules.map(module => ({
           ...(module.id ? { id: module.id } : {}), title: module.title,
-          topics: module.topics.map(topic => ({ ...(topic.id ? { id: topic.id } : {}), title: topic.title, sessions: topic.sessions, objectives: topic.objectives.split("\n").map(line => line.trim()).filter(Boolean) })),
+          topics: module.topics.map(topic => ({ ...(topic.id ? { id: topic.id } : {}), title: topic.title, sessions: topic.sessions, lab: topic.lab, objectives: topic.objectives.split("\n").map(line => line.trim()).filter(Boolean) })),
         }));
         const next = await ctx.call<StateView>("save-plan", { planId: entry.id, modules: payload });
         dirtyPlans.delete(entry.id);

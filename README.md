@@ -34,8 +34,8 @@ your study days, and start each day's topic from a teaching or practice session.
     is the blue circled day number. A green ✓ marks completed sessions and a red ! badge
     marks overdue ones; reviews are labelled "Review". Click a topic for its objectives,
     resources and linked sessions, and to mark it done or not done.
-  - **Curriculum:** a tab per plan. Rename, reorder, add or remove topics and set how many
-    sessions each needs. **Revise with AI** rewrites only the unfinished part, for example
+  - **Curriculum:** a tab per plan. Rename, reorder, add or remove topics and mark
+    labs (only labs can take several sessions). **Revise with AI** rewrites only the unfinished part, for example
     "more RF, add a PCB design module". Completed topics and in-progress topics with
     unchanged titles keep their progress. Unsaved edits are kept per plan while you switch
     tabs. **Archive plan** is also available here.
@@ -72,7 +72,12 @@ availability reschedules instantly, with no model call.
   unfinished flows onto your next study days.
 - **Keep dates:** the calendar counts from the start date and missed sessions show as
   overdue. Starting today's topic picks up the oldest overdue item first.
-- **Multi-session topics** show `part/of`. Starting session *k* marks the earlier
+- **Session rules for AI plans:** a lesson is one session and covers 1 to 4 concepts
+  (its objectives), because the tutor adds prerequisites on top. Only a **lab** (a hands-on
+  project) may span up to 4 sessions. The planning model's result is validated against
+  these rules and sent back with corrections if it breaks them. Plans you saved earlier,
+  and your own manual edits, are not held to the rules.
+- **Multi-session topics (labs)** show `part/of`. Starting session *k* marks the earlier
   parts behind you, and the topic finishes when it is marked done. A topic is due at
   the end of its last session's day: it only turns overdue after that day passes, not
   when its first session's day does.

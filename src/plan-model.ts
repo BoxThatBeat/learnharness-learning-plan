@@ -9,6 +9,8 @@ export const LIMITS = {
   title: 160,
   objective: 300,
   objectives: 8,
+  /** Concepts one planned session may cover (generated plans); prerequisites get pulled in on top. */
+  conceptsPerSession: 4,
   resources: 6,
   sessionsPerTopic: 4,
   goalPrompt: 8_000,
@@ -43,6 +45,8 @@ export type Topic = {
   title: string;
   objectives: string[];
   sessions: number;
+  /** Only labs (hands-on projects) may span several sessions; a lesson is one session. */
+  lab: boolean;
   resources: Resource[];
   status: "todo" | "done";
   completedAt: string | null;
@@ -67,7 +71,7 @@ export type Curriculum = {
   title: string;
   summary: string;
   sources: Resource[];
-  modules: { title: string; topics: { title: string; objectives: string[]; sessions: number; resources: Resource[] }[] }[];
+  modules: { title: string; topics: { title: string; objectives: string[]; sessions: number; lab: boolean; resources: Resource[] }[] }[];
 };
 
 export type DraftKind = "generate" | "revise";
@@ -247,6 +251,7 @@ function readTopic(value: unknown, label: string): Topic {
     title: text(value.title, `${label} title`, LIMITS.title),
     objectives: readObjectives(value.objectives, label),
     sessions: integer(value.sessions, `${label} sessions`, 1, LIMITS.sessionsPerTopic),
+    lab: value.lab === true,
     resources: readResources(value.resources, label),
     status: value.status === "done" ? "done" : "todo",
     completedAt: isDate(value.completedAt) ? value.completedAt : null,
@@ -299,6 +304,7 @@ export function readCurriculum(value: unknown): Curriculum {
           title: text(topic.title, `${label} title`, LIMITS.title),
           objectives: readObjectives(topic.objectives, label),
           sessions: integer(topic.sessions, `${label} sessions`, 1, LIMITS.sessionsPerTopic),
+          lab: topic.lab === true,
           resources: readResources(topic.resources, label).slice(0, LIMITS.resources),
         };
       }),
@@ -311,6 +317,23 @@ export function readCurriculum(value: unknown): Curriculum {
     sources: readResources(value.sources, "Plan").slice(0, 30),
     modules,
   };
+}
+
+/** House rules for *generated* curricula, returned to the planning model as correction feedback.
+ * Saved plans and manual edits are not held to them, so older plans keep loading. */
+export function planningProblems(curriculum: Curriculum): string[] {
+  const problems: string[] = [];
+  for (const module of curriculum.modules) {
+    for (const topic of module.topics) {
+      if (topic.sessions > 1 && !topic.lab) {
+        problems.push(`"${topic.title}" has ${topic.sessions} sessions but is not a lab. Only labs (hands-on projects, lab="true") may span several sessions; split it into separate single-session topics, each with its own title, or set sessions to 1.`);
+      }
+      if (topic.objectives.length > LIMITS.conceptsPerSession) {
+        problems.push(`"${topic.title}" lists ${topic.objectives.length} objectives; a session covers at most ${LIMITS.conceptsPerSession} concepts (prerequisites get added on top). Split it into several topics.`);
+      }
+    }
+  }
+  return problems;
 }
 
 function readDraft(value: unknown): Draft | null {
@@ -404,7 +427,7 @@ export function topicForSession(state: PlanState, sessionId: string): { entry: P
 const normalize = (value: string) => value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 
 function freshTopic(id: string, source: Curriculum["modules"][number]["topics"][number]): Topic {
-  return { id, title: source.title, objectives: source.objectives, sessions: source.sessions, resources: source.resources, status: "todo", completedAt: null, completionNote: "", sessionIds: [] };
+  return { id, title: source.title, objectives: source.objectives, sessions: source.sessions, lab: source.lab, resources: source.resources, status: "todo", completedAt: null, completionNote: "", sessionIds: [] };
 }
 
 /** Replace a course's plan with a newly generated curriculum. */
@@ -440,7 +463,7 @@ export function acceptRevision(state: PlanState, entryId: string, curriculum: Cu
       const existing = todoByTitle.get(normalize(source.title));
       if (existing && !used.has(existing.id)) {
         used.add(existing.id);
-        return { ...existing, title: source.title, objectives: source.objectives, sessions: source.sessions, resources: source.resources };
+        return { ...existing, title: source.title, objectives: source.objectives, sessions: source.sessions, lab: source.lab, resources: source.resources };
       }
       return freshTopic(`t-${nextId++}`, source);
     });
@@ -487,6 +510,7 @@ export function applyManualEdit(state: PlanState, entryId: string, input: unknow
         title: text(topic.title, `${topicLabel} title`, LIMITS.title),
         objectives: readObjectives(topic.objectives, topicLabel),
         sessions: integer(topic.sessions, `${topicLabel} sessions`, 1, LIMITS.sessionsPerTopic),
+        lab: topic.lab === true,
       };
       if (typeof topic.id === "string" && known.has(topic.id) && !seen.has(topic.id)) {
         seen.add(topic.id);

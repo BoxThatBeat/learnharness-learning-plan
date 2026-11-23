@@ -9,7 +9,7 @@ import {
 import { createFetchTool } from "./fetch-tool.ts";
 import {
   acceptGenerated, acceptRevision, activeEntries, applyManualEdit, emptyState, entryName, entryOfTopic, findEntry, findTopic, LIMITS,
-  linkSession, localDate, newEntry, parseState, readCurriculum, readName, readProfile, setTopicStatus, topicForSession, updateEntry,
+  linkSession, localDate, newEntry, parseState, planningProblems, readCurriculum, readName, readProfile, setTopicStatus, topicForSession, updateEntry,
   type Draft, type DraftKind, type ModelChoice, type PlanEntry, type PlanState,
 } from "./plan-model.ts";
 import { brief, buildSchedule, slotForTopic, type Slot } from "./schedule.ts";
@@ -202,8 +202,8 @@ export function activate(ctx: PluginBackendContext, options: BackendOptions = {}
 
   // ---- Planning workers ----
   const workerTools = () => [createFetchTool(options.fetchDeps)];
-  cleanups.push(ctx.workers.register({ id: GENERATE_WORKER_ID, instructions: generateInstructions, resultSchema: curriculumSchema, tools: workerTools, validateResult: result => { readCurriculum(result); } }));
-  cleanups.push(ctx.workers.register({ id: REVISE_WORKER_ID, instructions: reviseInstructions, resultSchema: curriculumSchema, tools: workerTools, validateResult: result => { readCurriculum(result); } }));
+  cleanups.push(ctx.workers.register({ id: GENERATE_WORKER_ID, instructions: generateInstructions, resultSchema: curriculumSchema, tools: workerTools, validateResult: result => { const problems = planningProblems(readCurriculum(result)); if (problems.length) throw new Error(`Fix these and submit again:\n${problems.join("\n")}`); } }));
+  cleanups.push(ctx.workers.register({ id: REVISE_WORKER_ID, instructions: reviseInstructions, resultSchema: curriculumSchema, tools: workerTools, validateResult: result => { const problems = planningProblems(readCurriculum(result)); if (problems.length) throw new Error(`Fix these and submit again:\n${problems.join("\n")}`); } }));
 
   const observers = new Map<string, () => void>();
   /** Update the draft whose request is `requestId`, wherever its course now is. A removed course is ignored. */

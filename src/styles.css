@@ -143,6 +143,7 @@
 .lp-topic__id { flex: none; width: 3.25rem; color: var(--lp-muted); font-family: var(--font-mono, monospace); font-size: 0.72rem; }
 .lp-topic.is-done .lp-topic__id { color: var(--lp-done); }
 .lp-topic__sessions { width: 3.75rem; flex: none; }
+.lp-topic__lab { flex: none; display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.85em; cursor: pointer; }
 .lp-topic__objectives { margin-top: 0.25rem; font-size: 0.8rem; resize: vertical; }
 
 /* Draft preview */
