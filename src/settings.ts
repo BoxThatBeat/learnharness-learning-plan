@@ -2,6 +2,8 @@ import type { PluginFrontendContext, PluginWidgetHandle } from "learnharness-plu
 import type { Profile } from "./plan-model.ts";
 import { DraftPanel, el, message, planColor, planLabel, subscribeState, type PlanView, type StateView } from "./ui-common.ts";
 
+const SPINNER_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" opacity="0.25"/><path d="M12 3a9 9 0 0 1 9 9"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></path></svg>';
+
 const DAYS = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [0, "Sun"]] as const;
 
 export function mountSettings(ctx: PluginFrontendContext, container: HTMLElement, signal: AbortSignal): () => void {
@@ -176,15 +178,28 @@ export function mountSettings(ctx: PluginFrontendContext, container: HTMLElement
   planner.append(modelRow, goal, plannerActions, draft.root);
   detail.append(planner);
 
+  /** True from the click until the server's reply shows the draft running. */
+  let starting = false;
+  function paintGenerate() {
+    const entry = current();
+    const draftRunning = entry?.draft?.status === "running";
+    const busy = starting || draftRunning;
+    const revising = draftRunning && entry?.draft?.kind !== "generate";
+    generateButton.update(busy
+      ? { label: revising ? "Revising plan" : "Generating plan", icon: SPINNER_ICON, disabled: true }
+      : { label: entry?.plan ? "Regenerate plan" : "Generate plan", icon: undefined, disabled: !entry || entry.archived || Boolean(view?.loadError) });
+  }
   async function generate() {
     plannerStatus.textContent = "";
+    starting = true;
+    paintGenerate();
     try {
       const entry = current();
       if (!entry) return;
       if (profileDirty) throw new Error("Save your schedule first so the plan is sized to it.");
       apply(await ctx.call<StateView>("generate", { planId: entry.id, goal: goal.value }));
       goalDirty = false;
-    } catch (failure) { plannerStatus.textContent = message(failure); }
+    } catch (failure) { plannerStatus.textContent = message(failure); } finally { starting = false; paintGenerate(); }
   }
   const generateButton = button(plannerActions, {
     label: "Generate plan", size: "sm",
@@ -332,8 +347,7 @@ export function mountSettings(ctx: PluginFrontendContext, container: HTMLElement
     picker.update({ value: entry.profile.modelOverride ?? undefined });
     modelHint.textContent = entry.profile.modelOverride ? "" : "Using the strong model slot.";
     reset.update({ disabled: !entry.profile.modelOverride });
-    const running = entry.draft?.status === "running";
-    generateButton.update({ label: entry.plan ? "Regenerate plan" : "Generate plan", disabled: running || entry.archived || Boolean(next.loadError) });
+    paintGenerate();
     openPlan.update({ disabled: !entry.plan || entry.archived });
     draft.update(entry);
   }

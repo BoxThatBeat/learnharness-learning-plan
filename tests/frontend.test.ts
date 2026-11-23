@@ -130,6 +130,9 @@ test("sidebar tab, calendar, curriculum editing and the kickoff interceptor work
   clickButton(settingsRoot, "Generate plan");
   await flush();
   assert.match(settingsRoot.textContent ?? "", /Generating your plan/);
+  const generating = [...settingsRoot.querySelectorAll("button")].find(node => node.textContent === "Generating plan");
+  assert.ok(generating, "the generate button turns into a Generating plan button");
+  assert.equal(generating.disabled, true);
   server.finish();
   await flush();
   await (host.settings() && server.call("get-state"));
